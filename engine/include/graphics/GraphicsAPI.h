@@ -41,18 +41,14 @@ namespace eng
         void BindMesh(Mesh *mesh);
         void DrawMesh(Mesh *mesh);
 
-        static uint32_t FindMemoryType(VkPhysicalDevice gpu, uint32_t typeBits, VkMemoryPropertyFlags props);
-        static void CreateBuffer(VkPhysicalDevice gpu, VkDevice device, VkDeviceSize size,
-                                 VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps,
-                                 VkBuffer &outBuf, VkDeviceMemory &outMem);
-        static void CopyBuffer(VkDevice device, VkQueue queue, VkCommandPool pool,
-                               VkBuffer src, VkBuffer dst, VkDeviceSize size);
-
         VkBuffer CreateVertexBuffer(const std::vector<float> &vertices);
         VkBuffer CreateIndexBuffer(const std::vector<uint32_t> &indices);
         void DestroyBuffers();
 
         const float *ClearColor() const { return m_clearColor; }
+
+        void SetCurrentDescriptorSet(VkDescriptorSet set) { m_currenDescriptortSet = set; }
+        VkDescriptorSet GetCurrentDescriptorSet() const { return m_currenDescriptortSet; }
 
     private:
         VkCommandBuffer m_cmd = VK_NULL_HANDLE;
@@ -60,6 +56,8 @@ namespace eng
         float m_clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
 
         std::vector<BufferResource> m_ownedBuffers;
+
+        VkDescriptorSet m_currenDescriptortSet = VK_NULL_HANDLE;
     };
 
 }

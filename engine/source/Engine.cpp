@@ -146,4 +146,14 @@ namespace eng
     {
         return m_renderQueue;
     }
+
+    void Engine::SetScene(Scene *scene)
+    {
+        m_currentScene.reset(scene);
+    }
+
+    Scene *Engine::GetScene()
+    {
+        return m_currentScene.get();
+    }
 }

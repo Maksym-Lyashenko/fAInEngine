@@ -4,6 +4,10 @@
 
 #include <Engine.h>
 #include "graphics/ShaderProgram.h"
+#include "scene/GameObject.h"
+#include "scene/Component.h"
+#include "scene/components/CameraComponent.h"
+#include "vk/VkHelpers.h"
 
 #include <stdexcept>
 #include <cstring>
@@ -13,12 +17,6 @@
 
 namespace eng
 {
-
-    static void vkCheck(VkResult r, const char *msg)
-    {
-        if (r != VK_SUCCESS)
-            throw std::runtime_error(msg);
-    }
 
     // ---- Debug Utils (VK_EXT_debug_utils) ----
     static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
@@ -178,16 +176,16 @@ namespace eng
             ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         }
 
-        vkCheck(vkCreateSwapchainKHR(m_device, &ci, nullptr, &m_swapchain), "vkCreateSwapchainKHR failed");
+        vkutil::vkCheck(vkCreateSwapchainKHR(m_device, &ci, nullptr, &m_swapchain), "vkCreateSwapchainKHR failed");
 
         m_format = fmt.format;
         m_extent = ext;
 
         // Images
         uint32_t count = 0;
-        vkCheck(vkGetSwapchainImagesKHR(m_device, m_swapchain, &count, nullptr), "vkGetSwapchainImagesKHR failed");
+        vkutil::vkCheck(vkGetSwapchainImagesKHR(m_device, m_swapchain, &count, nullptr), "vkGetSwapchainImagesKHR failed");
         m_images.resize(count);
-        vkCheck(vkGetSwapchainImagesKHR(m_device, m_swapchain, &count, m_images.data()), "vkGetSwapchainImagesKHR failed(2)");
+        vkutil::vkCheck(vkGetSwapchainImagesKHR(m_device, m_swapchain, &count, m_images.data()), "vkGetSwapchainImagesKHR failed(2)");
 
         createImageViews();
         createRenderPass();
@@ -210,7 +208,7 @@ namespace eng
             iv.subresourceRange.baseArrayLayer = 0;
             iv.subresourceRange.layerCount = 1;
 
-            vkCheck(vkCreateImageView(m_device, &iv, nullptr, &m_views[i]), "vkCreateImageView failed");
+            vkutil::vkCheck(vkCreateImageView(m_device, &iv, nullptr, &m_views[i]), "vkCreateImageView failed");
         }
     }
 
@@ -250,7 +248,7 @@ namespace eng
         rp.dependencyCount = 1;
         rp.pDependencies = &dep;
 
-        vkCheck(vkCreateRenderPass(m_device, &rp, nullptr, &m_renderPass), "vkCreateRenderPass failed");
+        vkutil::vkCheck(vkCreateRenderPass(m_device, &rp, nullptr, &m_renderPass), "vkCreateRenderPass failed");
     }
 
     void Swapchain::createFramebuffers()
@@ -269,7 +267,7 @@ namespace eng
             fbi.height = m_extent.height;
             fbi.layers = 1;
 
-            vkCheck(vkCreateFramebuffer(m_device, &fbi, nullptr, &m_framebuffers[i]), "vkCreateFramebuffer failed");
+            vkutil::vkCheck(vkCreateFramebuffer(m_device, &fbi, nullptr, &m_framebuffers[i]), "vkCreateFramebuffer failed");
         }
     }
 
@@ -315,7 +313,7 @@ namespace eng
         ci.queueFamilyIndex = queueFamilyIndex;
         ci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
-        vkCheck(vkCreateCommandPool(m_device, &ci, nullptr, &m_pool), "vkCreateCommandPool failed");
+        vkutil::vkCheck(vkCreateCommandPool(m_device, &ci, nullptr, &m_pool), "vkCreateCommandPool failed");
     }
 
     void CommandPool::destroy()
@@ -334,7 +332,7 @@ namespace eng
 
     void CommandPool::reset()
     {
-        vkCheck(vkResetCommandPool(m_device, m_pool, 0), "vkResetCommandPool failed");
+        vkutil::vkCheck(vkResetCommandPool(m_device, m_pool, 0), "vkResetCommandPool failed");
         m_cmdBufs.clear();
     }
 
@@ -346,7 +344,7 @@ namespace eng
         ai.commandBufferCount = count;
 
         m_cmdBufs.resize(count);
-        vkCheck(vkAllocateCommandBuffers(m_device, &ai, m_cmdBufs.data()), "vkAllocateCommandBuffers failed");
+        vkutil::vkCheck(vkAllocateCommandBuffers(m_device, &ai, m_cmdBufs.data()), "vkAllocateCommandBuffers failed");
     }
 
     // ===================== FrameSync =====================
@@ -363,9 +361,8 @@ namespace eng
 
         for (int i = 0; i < MAX_FRAMES; ++i)
         {
-            vkCheck(vkCreateSemaphore(m_device, &sci, nullptr, &m_imageAvailable[i]), "vkCreateSemaphore imageAvailable failed");
-            vkCheck(vkCreateSemaphore(m_device, &sci, nullptr, &m_renderFinished[i]), "vkCreateSemaphore renderFinished failed");
-            vkCheck(vkCreateFence(m_device, &fci, nullptr, &m_inFlight[i]), "vkCreateFence failed");
+            vkutil::vkCheck(vkCreateSemaphore(m_device, &sci, nullptr, &m_imageAvailable[i]), "vkCreateSemaphore imageAvailable failed");
+            vkutil::vkCheck(vkCreateFence(m_device, &fci, nullptr, &m_inFlight[i]), "vkCreateFence failed");
         }
     }
 
@@ -378,12 +375,9 @@ namespace eng
         {
             if (m_imageAvailable[i])
                 vkDestroySemaphore(m_device, m_imageAvailable[i], nullptr);
-            if (m_renderFinished[i])
-                vkDestroySemaphore(m_device, m_renderFinished[i], nullptr);
             if (m_inFlight[i])
                 vkDestroyFence(m_device, m_inFlight[i], nullptr);
             m_imageAvailable[i] = VK_NULL_HANDLE;
-            m_renderFinished[i] = VK_NULL_HANDLE;
             m_inFlight[i] = VK_NULL_HANDLE;
         }
     }
@@ -392,22 +386,20 @@ namespace eng
 
     VulkanContext::~VulkanContext()
     {
-        // Proper teardown order
         if (m_device)
             vkDeviceWaitIdle(m_device);
 
+        // Destroy shader programs (pipelines/layouts) BEFORE device
         for (auto &sp : m_programs)
-        {
             if (sp)
                 sp->Destroy();
-        }
         m_programs.clear();
 
-        Engine::GetInstance().GetGraphicsAPI().DestroyBuffers();
+        destroyCameraUBO();
+        destroyPerImageSync();
 
         m_sync.destroy();
         m_cmdPool.destroy();
-        destroyPerImageSync();
         m_swapchain.destroy();
 
         if (m_surface)
@@ -474,8 +466,8 @@ namespace eng
         m_renderFinishedPerImage.resize(n);
         for (size_t i = 0; i < n; ++i)
         {
-            vkCheck(vkCreateSemaphore(m_device, &sci, nullptr, &m_renderFinishedPerImage[i]),
-                    "vkCreateSemaphore renderFinishedPerImage failed");
+            vkutil::vkCheck(vkCreateSemaphore(m_device, &sci, nullptr, &m_renderFinishedPerImage[i]),
+                            "vkCreateSemaphore renderFinishedPerImage failed");
         }
 
         // fences that guard each swapchain image usage
@@ -494,6 +486,164 @@ namespace eng
         }
         m_renderFinishedPerImage.clear();
         m_imagesInFlight.clear();
+    }
+
+    void VulkanContext::createCameraUBO()
+    {
+        // 1) set layout
+        VkDescriptorSetLayoutBinding b{};
+        b.binding = 0;
+        b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        b.descriptorCount = 1;
+        b.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        li.bindingCount = 1;
+        li.pBindings = &b;
+
+        vkutil::vkCheck(vkCreateDescriptorSetLayout(m_device, &li, nullptr, &m_cameraSetLayout),
+                        "vkCreateDescriptorSetLayout failed");
+
+        // 2) pool
+        VkDescriptorPoolSize ps{};
+        ps.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        ps.descriptorCount = FrameSync::MAX_FRAMES;
+
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = FrameSync::MAX_FRAMES;
+        pi.poolSizeCount = 1;
+        pi.pPoolSizes = &ps;
+
+        vkutil::vkCheck(vkCreateDescriptorPool(m_device, &pi, nullptr, &m_descPool),
+                        "vkCreateDescriptorPool failed");
+
+        // 3) buffers per frame
+        m_cameraBuffers.resize(FrameSync::MAX_FRAMES);
+        m_cameraMemories.resize(FrameSync::MAX_FRAMES);
+        m_cameraMapped.resize(FrameSync::MAX_FRAMES);
+
+        VkDeviceSize size = sizeof(CameraUBO);
+
+        for (int i = 0; i < FrameSync::MAX_FRAMES; ++i)
+        {
+            vkutil::CreateBuffer(m_gpu, m_device, size,
+                                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                 m_cameraBuffers[i], m_cameraMemories[i]);
+
+            vkutil::vkCheck(vkMapMemory(m_device, m_cameraMemories[i], 0, size, 0, &m_cameraMapped[i]),
+                            "vkMapMemory camera UBO failed");
+        }
+
+        // 4) allocate sets
+        std::vector<VkDescriptorSetLayout> layouts(FrameSync::MAX_FRAMES, m_cameraSetLayout);
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = m_descPool;
+        ai.descriptorSetCount = FrameSync::MAX_FRAMES;
+        ai.pSetLayouts = layouts.data();
+
+        m_cameraSets.resize(FrameSync::MAX_FRAMES);
+        vkutil::vkCheck(vkAllocateDescriptorSets(m_device, &ai, m_cameraSets.data()),
+                        "vkAllocateDescriptorSets failed");
+
+        // 5) write descriptors
+        for (int i = 0; i < FrameSync::MAX_FRAMES; ++i)
+        {
+            VkDescriptorBufferInfo bi{};
+            bi.buffer = m_cameraBuffers[i];
+            bi.offset = 0;
+            bi.range = sizeof(CameraUBO);
+
+            VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            w.dstSet = m_cameraSets[i];
+            w.dstBinding = 0;
+            w.descriptorCount = 1;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            w.pBufferInfo = &bi;
+
+            vkUpdateDescriptorSets(m_device, 1, &w, 0, nullptr);
+        }
+    }
+
+    void VulkanContext::destroyCameraUBO()
+    {
+        if (!m_device)
+            return;
+
+        for (int i = 0; i < (int)m_cameraMapped.size(); ++i)
+        {
+            if (m_cameraMapped[i])
+            {
+                vkUnmapMemory(m_device, m_cameraMemories[i]);
+                m_cameraMapped[i] = nullptr;
+            }
+        }
+
+        for (int i = 0; i < (int)m_cameraBuffers.size(); ++i)
+        {
+            if (m_cameraBuffers[i])
+                vkDestroyBuffer(m_device, m_cameraBuffers[i], nullptr);
+            if (m_cameraMemories[i])
+                vkFreeMemory(m_device, m_cameraMemories[i], nullptr);
+        }
+
+        m_cameraBuffers.clear();
+        m_cameraMemories.clear();
+        m_cameraMapped.clear();
+        m_cameraSets.clear();
+
+        if (m_descPool)
+            vkDestroyDescriptorPool(m_device, m_descPool, nullptr);
+        m_descPool = VK_NULL_HANDLE;
+
+        if (m_cameraSetLayout)
+            vkDestroyDescriptorSetLayout(m_device, m_cameraSetLayout, nullptr);
+        m_cameraSetLayout = VK_NULL_HANDLE;
+    }
+
+    void VulkanContext::buildCameraData(SDL_Window *window, CameraData &out) const
+    {
+        // Defaults if camera is nullptr
+        out.viewMatrix = glm::mat4(1.0f);
+        out.projectionMatrix = glm::mat4(1.0f);
+
+        int w = 0, h = 0;
+        SDL_GetWindowSizeInPixels(window, &w, &h);
+        if (w <= 0 || h <= 0)
+            return;
+
+        const float aspect = static_cast<float>(w) / static_cast<float>(h);
+
+        auto *scene = Engine::GetInstance().GetScene();
+        if (!scene)
+            return;
+
+        auto cameraObject = scene->GetMainCamera();
+        if (!cameraObject)
+            return;
+
+        auto cameraComponent = cameraObject->GetComponent<CameraComponent>();
+        if (!cameraComponent)
+            return;
+
+        out.viewMatrix = cameraComponent->GetViewMatrix();
+        out.projectionMatrix = cameraComponent->GetProjectionMatrix(aspect);
+    }
+
+    void VulkanContext::updateCameraUBO(const CameraData &cameraData)
+    {
+        const uint32_t fi = m_sync.frameIndex();
+        if (fi >= m_cameraMapped.size() || !m_cameraMapped[fi])
+            return;
+
+        CameraUBO ubo{};
+        ubo.view = cameraData.viewMatrix;
+        ubo.proj = cameraData.projectionMatrix;
+
+        // flip Y for Vulkan
+        ubo.proj[1][1] *= -1.0f;
+
+        std::memcpy(m_cameraMapped[fi], &ubo, sizeof(CameraUBO));
     }
 
     VulkanContext::QueueFamilies VulkanContext::findQueueFamilies(VkPhysicalDevice gpu, VkSurfaceKHR surface)
@@ -542,6 +692,8 @@ namespace eng
         createSurface(window);
         pickPhysicalDevice();
         createDevice();
+
+        createCameraUBO();
 
         // swapchain depends on device + surface
         m_swapchain.create(m_gpu, m_device, m_surface, window, m_qGraphics, m_qPresent);
@@ -605,7 +757,7 @@ namespace eng
             ci.pNext = &dbgCI;
         }
 
-        vkCheck(vkCreateInstance(&ci, nullptr, &m_instance), "vkCreateInstance failed");
+        vkutil::vkCheck(vkCreateInstance(&ci, nullptr, &m_instance), "vkCreateInstance failed");
     }
 
     void VulkanContext::setupDebugMessenger()
@@ -623,8 +775,8 @@ namespace eng
             VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
         ci.pfnUserCallback = DebugCallback;
 
-        vkCheck(CreateDebugUtilsMessengerEXT(m_instance, &ci, nullptr, &m_debugMessenger),
-                "CreateDebugUtilsMessengerEXT failed");
+        vkutil::vkCheck(CreateDebugUtilsMessengerEXT(m_instance, &ci, nullptr, &m_debugMessenger),
+                        "CreateDebugUtilsMessengerEXT failed");
     }
 
     void VulkanContext::createSurface(SDL_Window *window)
@@ -643,12 +795,12 @@ namespace eng
     void VulkanContext::pickPhysicalDevice()
     {
         uint32_t count = 0;
-        vkCheck(vkEnumeratePhysicalDevices(m_instance, &count, nullptr), "vkEnumeratePhysicalDevices failed");
+        vkutil::vkCheck(vkEnumeratePhysicalDevices(m_instance, &count, nullptr), "vkEnumeratePhysicalDevices failed");
         if (count == 0)
             throw std::runtime_error("No Vulkan GPUs found");
 
         std::vector<VkPhysicalDevice> devs(count);
-        vkCheck(vkEnumeratePhysicalDevices(m_instance, &count, devs.data()), "vkEnumeratePhysicalDevices failed(2)");
+        vkutil::vkCheck(vkEnumeratePhysicalDevices(m_instance, &count, devs.data()), "vkEnumeratePhysicalDevices failed(2)");
 
         for (auto d : devs)
         {
@@ -699,23 +851,21 @@ namespace eng
         ci.enabledExtensionCount = 1;
         ci.ppEnabledExtensionNames = devExts;
 
-        vkCheck(vkCreateDevice(m_gpu, &ci, nullptr, &m_device), "vkCreateDevice failed");
+        vkutil::vkCheck(vkCreateDevice(m_gpu, &ci, nullptr, &m_device), "vkCreateDevice failed");
 
         vkGetDeviceQueue(m_device, m_qGraphics, 0, &m_graphicsQueue);
         vkGetDeviceQueue(m_device, m_qPresent, 0, &m_presentQueue);
     }
 
-    void VulkanContext::recordCommandBuffer(uint32_t imageIndex)
+    void VulkanContext::recordCommandBuffer(uint32_t imageIndex, SDL_Window *window)
     {
-        if (imageIndex >= m_cmdPool.size())
-            throw std::runtime_error("Command buffer index out of range");
-
         VkCommandBuffer cb = m_cmdPool.at(imageIndex);
 
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        vkCheck(vkBeginCommandBuffer(cb, &bi), "vkBeginCommandBuffer failed");
+        vkutil::vkCheck(vkBeginCommandBuffer(cb, &bi), "vkBeginCommandBuffer failed");
 
-        auto *cc = Engine::GetInstance().GetGraphicsAPI().ClearColor();
+        // Clear color from GraphicsAPI
+        const float *cc = Engine::GetInstance().GetGraphicsAPI().ClearColor();
 
         VkClearValue clear{};
         clear.color.float32[0] = cc[0];
@@ -733,15 +883,23 @@ namespace eng
 
         vkCmdBeginRenderPass(cb, &rbi, VK_SUBPASS_CONTENTS_INLINE);
 
+        // --- camera + ubo ---
+        CameraData cameraData{};
+        buildCameraData(window, cameraData);
+        updateCameraUBO(cameraData);
+
         auto &api = Engine::GetInstance().GetGraphicsAPI();
         api.Begin(cb);
-        auto &renderQueue = Engine::GetInstance().GetRenderQueue();
-        renderQueue.Draw(api);
+        api.SetCurrentDescriptorSet(CurrentCameraSet());
+
+        auto &rq = Engine::GetInstance().GetRenderQueue();
+        rq.Draw(api, cameraData);
+
         api.End();
 
         vkCmdEndRenderPass(cb);
 
-        vkCheck(vkEndCommandBuffer(cb), "vkEndCommandBuffer failed");
+        vkutil::vkCheck(vkEndCommandBuffer(cb), "vkEndCommandBuffer failed");
     }
 
     void VulkanContext::recreateSwapchain(SDL_Window *window)
@@ -791,7 +949,7 @@ namespace eng
             m_framebufferResized = true;
 
         VkFence fence = m_sync.inFlightFence();
-        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX), "vkWaitForFences failed");
+        vkutil::vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX), "vkWaitForFences failed");
 
         uint32_t imageIndex = 0;
         VkResult acq = vkAcquireNextImageKHR(
@@ -811,21 +969,21 @@ namespace eng
         {
             m_framebufferResized = true;
         }
-        vkCheck(acq, "vkAcquireNextImageKHR failed");
+        vkutil::vkCheck(acq, "vkAcquireNextImageKHR failed");
 
         if (imageIndex < m_imagesInFlight.size() && m_imagesInFlight[imageIndex] != VK_NULL_HANDLE)
         {
             VkFence imgFence = m_imagesInFlight[imageIndex];
-            vkCheck(vkWaitForFences(m_device, 1, &imgFence, VK_TRUE, UINT64_MAX), "vkWaitForFences (image) failed");
+            vkutil::vkCheck(vkWaitForFences(m_device, 1, &imgFence, VK_TRUE, UINT64_MAX), "vkWaitForFences (image) failed");
         }
 
-        vkCheck(vkResetFences(m_device, 1, &fence), "vkResetFences failed");
+        vkutil::vkCheck(vkResetFences(m_device, 1, &fence), "vkResetFences failed");
 
         m_imagesInFlight[imageIndex] = fence;
 
         // record
-        vkCheck(vkResetCommandBuffer(m_cmdPool.at(imageIndex), 0), "vkResetCommandBuffer failed");
-        recordCommandBuffer(imageIndex);
+        vkutil::vkCheck(vkResetCommandBuffer(m_cmdPool.at(imageIndex), 0), "vkResetCommandBuffer failed");
+        recordCommandBuffer(imageIndex, window);
 
         VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
@@ -843,7 +1001,7 @@ namespace eng
         si.signalSemaphoreCount = 1;
         si.pSignalSemaphores = &signalSem;
 
-        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence), "vkQueueSubmit failed");
+        vkutil::vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence), "vkQueueSubmit failed");
 
         VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
         pi.waitSemaphoreCount = 1;
@@ -862,7 +1020,7 @@ namespace eng
         }
         else
         {
-            vkCheck(pres, "vkQueuePresentKHR failed");
+            vkutil::vkCheck(pres, "vkQueuePresentKHR failed");
         }
 
         m_sync.advance();

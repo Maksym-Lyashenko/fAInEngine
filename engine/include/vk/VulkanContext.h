@@ -10,9 +10,14 @@
 #include <cstdint>
 #include <string>
 
+#include <glm/mat4x4.hpp>
+
 namespace eng
 {
 
+    struct CameraData;
+
+    // ---------------- Swapchain ----------------
     class Swapchain
     {
     public:
@@ -76,6 +81,7 @@ namespace eng
         std::vector<VkFramebuffer> m_framebuffers;
     };
 
+    // ---------------- CommandPool ----------------
     class CommandPool
     {
     public:
@@ -101,6 +107,7 @@ namespace eng
         std::vector<VkCommandBuffer> m_cmdBufs;
     };
 
+    // ---------------- FrameSync ----------------
     class FrameSync
     {
     public:
@@ -119,19 +126,20 @@ namespace eng
         void advance() { m_frameIndex = (m_frameIndex + 1) % MAX_FRAMES; }
 
         VkSemaphore imageAvailable() const { return m_imageAvailable[m_frameIndex]; }
-        VkSemaphore renderFinished() const { return m_renderFinished[m_frameIndex]; }
         VkFence inFlightFence() const { return m_inFlight[m_frameIndex]; }
 
     private:
         VkDevice m_device = VK_NULL_HANDLE;
         VkSemaphore m_imageAvailable[MAX_FRAMES]{};
-        VkSemaphore m_renderFinished[MAX_FRAMES]{};
         VkFence m_inFlight[MAX_FRAMES]{};
         uint32_t m_frameIndex = 0;
     };
 
+    // ---------------- VulkanContext ----------------
+
     class VulkanContext
     {
+
     public:
         VulkanContext() = default;
         ~VulkanContext();
@@ -147,6 +155,7 @@ namespace eng
         void RecreateAllPrograms();
 
     public:
+        // getters used by GraphicsAPI
         VkDevice GetDevice() const { return m_device; }
         VkPhysicalDevice GetGPU() const { return m_gpu; }
         VkQueue GetGraphicsQueue() const { return m_graphicsQueue; }
@@ -154,6 +163,9 @@ namespace eng
 
         VkRenderPass GetRenderPass() const { return m_swapchain.renderPass(); }
         VkExtent2D GetExtent() const { return m_swapchain.extent(); }
+
+        VkDescriptorSetLayout GetCameraSetLayout() const { return m_cameraSetLayout; }
+        VkDescriptorSet CurrentCameraSet() const { return m_cameraSets[m_sync.frameIndex()]; }
 
     private:
         struct QueueFamilies
@@ -163,13 +175,20 @@ namespace eng
             bool complete() const { return graphics.has_value() && present.has_value(); }
         };
 
+        struct alignas(16) CameraUBO
+        {
+            glm::mat4 view{1.0f};
+            glm::mat4 proj{1.0f};
+        };
+
+    private:
         void createInstance(SDL_Window *window);
         void setupDebugMessenger();
         void createSurface(SDL_Window *window);
         void pickPhysicalDevice();
         void createDevice();
 
-        void recordCommandBuffer(uint32_t imageIndex);
+        void recordCommandBuffer(uint32_t imageIndex, SDL_Window *window);
 
         void recreateSwapchain(SDL_Window *window);
 
@@ -177,13 +196,14 @@ namespace eng
         static bool hasDeviceExtension(VkPhysicalDevice gpu, const char *extName);
         static bool checkValidationLayerSupport();
 
-        std::vector<VkSemaphore> m_renderFinishedPerImage; // size = swapchain image count
-        std::vector<VkFence> m_imagesInFlight;             // size = swapchain image count (or VK_NULL_HANDLE)
-
         void createPerImageSync();
         void destroyPerImageSync();
 
-        std::vector<std::shared_ptr<ShaderProgram>> m_programs;
+        void createCameraUBO();
+        void destroyCameraUBO();
+
+        void buildCameraData(SDL_Window *window, CameraData &out) const;
+        void updateCameraUBO(const CameraData &cameraData);
 
     private:
         // Debug toggles (validation only in Debug)
@@ -211,6 +231,22 @@ namespace eng
         FrameSync m_sync;
 
         bool m_framebufferResized = false;
+
+        // per swapchain image sync
+        std::vector<VkSemaphore> m_renderFinishedPerImage; // size = swapchain image count
+        std::vector<VkFence> m_imagesInFlight;             // size = swapchain image count (or VK_NULL_HANDLE)
+
+        // shader programs (strong refs so we can Destroy before device)
+        std::vector<std::shared_ptr<ShaderProgram>> m_programs;
+
+        // Camera UBO: set=0 binding=0
+        VkDescriptorSetLayout m_cameraSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool m_descPool = VK_NULL_HANDLE;
+        std::vector<VkDescriptorSet> m_cameraSets;
+
+        std::vector<VkBuffer> m_cameraBuffers;
+        std::vector<VkDeviceMemory> m_cameraMemories;
+        std::vector<void *> m_cameraMapped;
     };
 
 }

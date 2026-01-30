@@ -23,7 +23,7 @@ namespace eng
 
         void Create(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
                     const VertexLayout &layout,
-                    const std::string &vertSpv, const std::string &fragSpv);
+                    const std::string &vertSpv, const std::string &fragSpv, VkDescriptorSetLayout cameraSetLayout);
 
         // swapchain recreate
         void Recreate(VkRenderPass rp, VkExtent2D extent);
@@ -40,17 +40,17 @@ namespace eng
         VkPipelineLayout GetLayout() const { return m_layout; }
 
     private:
-        // Push constants block (has to be same as GLSL)
+        // Must match GLSL push_constant block exactly
         struct PushData
         {
-            glm::mat4 u_mvp = glm::mat4(1.0f);          // 64 bytes
+            glm::mat4 u_model = glm::mat4(1.0f);        // 64 bytes
             glm::vec4 u_color = glm::vec4(1, 1, 1, 1);  // 16 bytes
             glm::vec4 u_params = glm::vec4(0, 0, 1, 0); // x=time, y=value, z=strength, w=unused
         };
 
     private:
         VkShaderModule loadModule(const std::string &spvPath);
-        void createPipelineLayoutIfNeeded();
+        void createPipelineLayoutIfNeeded(VkDescriptorSetLayout cameraSetLayout);
         void recreatePipelineInternal(); // uses m_renderPass/m_extent
         void pushConstantsNow();         // vkCmdPushConstants if cmd is active
 
@@ -65,6 +65,8 @@ namespace eng
         VkPipeline m_pipeline = VK_NULL_HANDLE;
 
         PushData m_pc{};
+
+        VkDescriptorSetLayout m_cameraSetLayout = VK_NULL_HANDLE;
     };
 
 }

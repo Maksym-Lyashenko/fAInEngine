@@ -2,8 +2,9 @@
 
 namespace eng
 {
+    size_t Component::nextId = 1;
 
-    GameObject *eng::Component::GetOwner()
+    GameObject *Component::GetOwner()
     {
         return m_owner;
     }

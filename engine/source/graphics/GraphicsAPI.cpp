@@ -5,6 +5,7 @@
 #include "vk/VulkanContext.h"
 #include "render/Material.h"
 #include "render/Mesh.h"
+#include "vk/VkHelpers.h"
 
 namespace eng
 {
@@ -15,7 +16,7 @@ namespace eng
     {
         auto &vk = Engine::GetInstance().GetVulkanContext();
         auto sp = std::make_shared<ShaderProgram>();
-        sp->Create(vk.GetDevice(), vk.GetRenderPass(), vk.GetExtent(), layout, vertSpv, fragSpv);
+        sp->Create(vk.GetDevice(), vk.GetRenderPass(), vk.GetExtent(), layout, vertSpv, fragSpv, vk.GetCameraSetLayout());
 
         vk.RegisterShaderProgram(sp); // чтобы пересоздавать на resize (см. ниже)
         return sp;
@@ -53,72 +54,6 @@ namespace eng
             mesh->Draw();
     }
 
-    uint32_t GraphicsAPI::FindMemoryType(VkPhysicalDevice gpu, uint32_t typeBits, VkMemoryPropertyFlags props)
-    {
-        VkPhysicalDeviceMemoryProperties mp{};
-        vkGetPhysicalDeviceMemoryProperties(gpu, &mp);
-
-        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i)
-        {
-            if ((typeBits & (1u << i)) && (mp.memoryTypes[i].propertyFlags & props) == props)
-                return i;
-        }
-        throw std::runtime_error("FindMemoryType: no suitable memory type");
-    }
-
-    void GraphicsAPI::CreateBuffer(VkPhysicalDevice gpu, VkDevice device, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memProps, VkBuffer &outBuf, VkDeviceMemory &outMem)
-    {
-        VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        bi.size = size;
-        bi.usage = usage;
-        bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-        if (vkCreateBuffer(device, &bi, nullptr, &outBuf) != VK_SUCCESS)
-            throw std::runtime_error("vkCreateBuffer failed");
-
-        VkMemoryRequirements req{};
-        vkGetBufferMemoryRequirements(device, outBuf, &req);
-
-        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-        ai.allocationSize = req.size;
-        ai.memoryTypeIndex = FindMemoryType(gpu, req.memoryTypeBits, memProps);
-
-        if (vkAllocateMemory(device, &ai, nullptr, &outMem) != VK_SUCCESS)
-            throw std::runtime_error("vkAllocateMemory failed");
-
-        vkBindBufferMemory(device, outBuf, outMem, 0);
-    }
-
-    void GraphicsAPI::CopyBuffer(VkDevice device, VkQueue queue, VkCommandPool pool, VkBuffer src, VkBuffer dst, VkDeviceSize size)
-    {
-        VkCommandBufferAllocateInfo cai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        cai.commandPool = pool;
-        cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cai.commandBufferCount = 1;
-
-        VkCommandBuffer cmd{};
-        vkAllocateCommandBuffers(device, &cai, &cmd);
-
-        VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
-
-        VkBufferCopy copy{};
-        copy.size = size;
-        vkCmdCopyBuffer(cmd, src, dst, 1, &copy);
-
-        vkEndCommandBuffer(cmd);
-
-        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-        si.commandBufferCount = 1;
-        si.pCommandBuffers = &cmd;
-
-        vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
-        vkQueueWaitIdle(queue);
-
-        vkFreeCommandBuffers(device, pool, 1, &cmd);
-    }
-
     VkBuffer GraphicsAPI::CreateVertexBuffer(const std::vector<float> &vertices)
     {
         if (vertices.empty())
@@ -133,10 +68,10 @@ namespace eng
         // staging
         VkBuffer stagingBuf{};
         VkDeviceMemory stagingMem{};
-        CreateBuffer(gpu, device, size,
-                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     stagingBuf, stagingMem);
+        vkutil::CreateBuffer(gpu, device, size,
+                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                             stagingBuf, stagingMem);
 
         void *mapped = nullptr;
         vkMapMemory(device, stagingMem, 0, size, 0, &mapped);
@@ -146,12 +81,12 @@ namespace eng
         // device local
         VkBuffer vb{};
         VkDeviceMemory vbMem{};
-        CreateBuffer(gpu, device, size,
-                     VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                     vb, vbMem);
+        vkutil::CreateBuffer(gpu, device, size,
+                             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                             vb, vbMem);
 
-        CopyBuffer(device, vk.GetGraphicsQueue(), vk.GetCommandPool(), stagingBuf, vb, size);
+        vkutil::CopyBuffer(device, vk.GetGraphicsQueue(), vk.GetCommandPool(), stagingBuf, vb, size);
 
         vkDestroyBuffer(device, stagingBuf, nullptr);
         vkFreeMemory(device, stagingMem, nullptr);
@@ -174,10 +109,10 @@ namespace eng
         // staging
         VkBuffer stagingBuf{};
         VkDeviceMemory stagingMem{};
-        CreateBuffer(gpu, device, size,
-                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                     stagingBuf, stagingMem);
+        vkutil::CreateBuffer(gpu, device, size,
+                             VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                             stagingBuf, stagingMem);
 
         void *mapped = nullptr;
         vkMapMemory(device, stagingMem, 0, size, 0, &mapped);
@@ -187,12 +122,12 @@ namespace eng
         // device local
         VkBuffer ib{};
         VkDeviceMemory ibMem{};
-        CreateBuffer(gpu, device, size,
-                     VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                     ib, ibMem);
+        vkutil::CreateBuffer(gpu, device, size,
+                             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                             ib, ibMem);
 
-        CopyBuffer(device, vk.GetGraphicsQueue(), vk.GetCommandPool(), stagingBuf, ib, size);
+        vkutil::CopyBuffer(device, vk.GetGraphicsQueue(), vk.GetCommandPool(), stagingBuf, ib, size);
 
         vkDestroyBuffer(device, stagingBuf, nullptr);
         vkFreeMemory(device, stagingMem, nullptr);

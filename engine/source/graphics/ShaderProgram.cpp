@@ -1,6 +1,8 @@
 #include "graphics/ShaderProgram.h"
 #include "Engine.h"
 #include "graphics/GraphicsAPI.h"
+#include "vk/VkHelpers.h"
+
 #include <fstream>
 #include <vector>
 #include <stdexcept>
@@ -11,12 +13,6 @@ namespace eng
     ShaderProgram::~ShaderProgram()
     {
         Destroy();
-    }
-
-    static void vkCheck(VkResult r, const char *msg)
-    {
-        if (r != VK_SUCCESS)
-            throw std::runtime_error(msg);
     }
 
     static std::vector<uint32_t> readSpv(const std::string &path)
@@ -46,7 +42,7 @@ namespace eng
         return mod;
     }
 
-    void ShaderProgram::createPipelineLayoutIfNeeded()
+    void ShaderProgram::createPipelineLayoutIfNeeded(VkDescriptorSetLayout cameraSetLayout)
     {
         if (m_layout)
             return;
@@ -56,17 +52,21 @@ namespace eng
         range.offset = 0;
         range.size = sizeof(PushData);
 
+        VkDescriptorSetLayout setLayouts[] = {cameraSetLayout};
+
         VkPipelineLayoutCreateInfo li{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        li.setLayoutCount = 1;
+        li.pSetLayouts = setLayouts;
         li.pushConstantRangeCount = 1;
         li.pPushConstantRanges = &range;
 
-        vkCheck(vkCreatePipelineLayout(m_device, &li, nullptr, &m_layout),
-                "vkCreatePipelineLayout failed");
+        vkutil::vkCheck(vkCreatePipelineLayout(m_device, &li, nullptr, &m_layout),
+                        "vkCreatePipelineLayout failed");
     }
 
     void ShaderProgram::Create(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
                                const VertexLayout &layout,
-                               const std::string &vertSpv, const std::string &fragSpv)
+                               const std::string &vertSpv, const std::string &fragSpv, VkDescriptorSetLayout cameraSetLayout)
     {
         m_device = device;
         m_renderPass = renderPass;
@@ -75,7 +75,8 @@ namespace eng
         m_vertPath = vertSpv;
         m_fragPath = fragSpv;
 
-        createPipelineLayoutIfNeeded();
+        m_cameraSetLayout = cameraSetLayout;
+        createPipelineLayoutIfNeeded(m_cameraSetLayout);
         recreatePipelineInternal();
     }
 
@@ -152,8 +153,8 @@ namespace eng
 
         VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         rs.polygonMode = VK_POLYGON_MODE_FILL;
-        rs.cullMode = VK_CULL_MODE_BACK_BIT;    // <-- safest for now (no silent cull)
-        rs.frontFace = VK_FRONT_FACE_CLOCKWISE; // doesn't matter if cull none
+        rs.cullMode = VK_CULL_MODE_BACK_BIT;            // <-- safest for now (no silent cull)
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // doesn't matter if cull none
         rs.lineWidth = 1.f;
 
         VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
@@ -179,8 +180,8 @@ namespace eng
         gp.renderPass = m_renderPass;
         gp.subpass = 0;
 
-        vkCheck(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gp, nullptr, &m_pipeline),
-                "vkCreateGraphicsPipelines failed");
+        vkutil::vkCheck(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gp, nullptr, &m_pipeline),
+                        "vkCreateGraphicsPipelines failed");
 
         vkDestroyShaderModule(m_device, vert, nullptr);
         vkDestroyShaderModule(m_device, frag, nullptr);
@@ -207,6 +208,12 @@ namespace eng
             return; // Bind called outside recording
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+        VkDescriptorSet set = api.GetCurrentDescriptorSet();
+        if (set != VK_NULL_HANDLE)
+        {
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    m_layout, 0, 1, &set, 0, nullptr);
+        }
         api.SetCurrentPipelineLayout(m_layout);
 
         // optional: push current constants immediately
@@ -292,9 +299,9 @@ namespace eng
 
     void ShaderProgram::SetUniform(const std::string &name, const glm::mat4 &m)
     {
-        if (name == "u_mvp")
+        if (name == "u_model")
         {
-            m_pc.u_mvp = m;
+            m_pc.u_model = m;
         }
         else
             return;
