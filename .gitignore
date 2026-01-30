@@ -1,0 +1,6 @@
+build/
+assets/
+*.sln
+*.vcxproj*
+*.pdb
+*.obj
