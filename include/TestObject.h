@@ -12,6 +12,4 @@ public:
     void Update(float DeltaTime) override;
 
 private:
-    eng::Material m_material;
-    std::shared_ptr<eng::Mesh> m_mesh;
 };

@@ -21,7 +21,9 @@ TestObject::TestObject()
         "assets/shaders/fragment.spv",
         layout);
 
-    m_material.SetShaderProgram(shaderProgram);
+    auto material = std::make_shared<eng::Material>();
+
+    material->SetShaderProgram(shaderProgram);
 
     std::vector<float> vertices =
         {
@@ -35,7 +37,9 @@ TestObject::TestObject()
             0, 1, 2,
             0, 2, 3};
 
-    m_mesh = std::make_shared<eng::Mesh>(layout, vertices, indices);
+    auto mesh = std::make_shared<eng::Mesh>(layout, vertices, indices);
+
+    AddComponent(new eng::MeshComponent(material, mesh));
 }
 
 void TestObject::Update(float DeltaTime)
@@ -65,12 +69,4 @@ void TestObject::Update(float DeltaTime)
         position.y -= 0.01f;
     }
     SetPosition(position);
-
-    eng::RenderCommand command;
-    command.material = &m_material;
-    command.mesh = m_mesh.get();
-    command.modelMatrix = GetWorldTransform();
-
-    auto &renderQueue = eng::Engine::GetInstance().GetRenderQueue();
-    renderQueue.Submit(command);
 }
