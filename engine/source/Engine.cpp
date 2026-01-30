@@ -6,6 +6,60 @@
 
 namespace eng
 {
+
+    void keyboardHandler(SDL_Event e)
+    {
+        auto &inputManager = Engine::GetInstance().GetInputManager();
+
+        if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP)
+        {
+            // e.key.scancode — SDL_Scancode
+            // e.key.down     — bool (true for down)
+            // e.key.repeat   — auto repeat (if needs to ignore)
+            if (!e.key.repeat)
+            {
+                inputManager.SetKeyPressed(e.key.scancode, e.key.down);
+            }
+        }
+    }
+
+    void mouseHandler(SDL_Event e)
+    {
+        auto &inputManager = Engine::GetInstance().GetInputManager();
+
+        switch (e.type)
+        {
+        case SDL_EVENT_MOUSE_MOTION:
+            inputManager.SetMousePositionCurrent({(float)e.motion.x, (float)e.motion.y});
+            break;
+
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            inputManager.SetMouseButtonPressed(e.button.button, true);
+            break;
+
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            inputManager.SetMouseButtonPressed(e.button.button, false);
+            break;
+
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+            inputManager.Clear();
+            break;
+        }
+    }
+
+    void cursorPositionHandler(SDL_Event e)
+    {
+        auto &inputManager = Engine::GetInstance().GetInputManager();
+
+        inputManager.SetMousePositionOld(inputManager.GetMousePositionCurrent());
+
+        if (e.type == SDL_EVENT_MOUSE_MOTION)
+        {
+            glm::vec2 currentPos(static_cast<float>(e.motion.x), static_cast<float>(e.motion.y));
+            inputManager.SetMousePositionCurrent(currentPos);
+        }
+    }
+
     Engine &Engine::GetInstance()
     {
         static Engine instance;
@@ -61,16 +115,8 @@ namespace eng
                     running = false;
                 }
 
-                if (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_KEY_UP)
-                {
-                    // e.key.scancode — SDL_Scancode
-                    // e.key.down     — bool (true for down)
-                    // e.key.repeat   — auto repeat (if needs to ignore)
-                    if (!e.key.repeat)
-                    {
-                        m_inputManager.SetKeyPressed(e.key.scancode, e.key.down);
-                    }
-                }
+                keyboardHandler(e);
+                mouseHandler(e);
 
                 if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST || e.type == SDL_EVENT_WINDOW_MINIMIZED)
                 {
@@ -91,6 +137,7 @@ namespace eng
             m_application->Update(deltaTime);
 
             m_vulkanContext.drawFrame(m_window, resized);
+            m_inputManager.SetMousePositionOld(m_inputManager.GetMousePositionCurrent());
             resized = false;
         }
 
