@@ -7,7 +7,7 @@
 namespace eng
 {
 
-    void keyboardHandler(SDL_Event e)
+    void keyboardHandler(const SDL_Event &e)
     {
         auto &inputManager = Engine::GetInstance().GetInputManager();
 
@@ -23,40 +23,32 @@ namespace eng
         }
     }
 
-    void mouseHandler(SDL_Event e)
+    void mouseHandler(const SDL_Event &e)
     {
         auto &inputManager = Engine::GetInstance().GetInputManager();
-
-        switch (e.type)
-        {
-        case SDL_EVENT_MOUSE_MOTION:
-            inputManager.SetMousePositionCurrent({(float)e.motion.x, (float)e.motion.y});
-            break;
-
-        case SDL_EVENT_MOUSE_BUTTON_DOWN:
-            inputManager.SetMouseButtonPressed(e.button.button, true);
-            break;
-
-        case SDL_EVENT_MOUSE_BUTTON_UP:
-            inputManager.SetMouseButtonPressed(e.button.button, false);
-            break;
-
-        case SDL_EVENT_WINDOW_FOCUS_LOST:
-            inputManager.Clear();
-            break;
-        }
-    }
-
-    void cursorPositionHandler(SDL_Event e)
-    {
-        auto &inputManager = Engine::GetInstance().GetInputManager();
-
-        inputManager.SetMousePositionOld(inputManager.GetMousePositionCurrent());
 
         if (e.type == SDL_EVENT_MOUSE_MOTION)
         {
-            glm::vec2 currentPos(static_cast<float>(e.motion.x), static_cast<float>(e.motion.y));
-            inputManager.SetMousePositionCurrent(currentPos);
+            inputManager.SetMousePositionCurrent({(float)e.motion.x, (float)e.motion.y});
+            return;
+        }
+
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+        {
+            inputManager.SetMouseButtonPressed(e.button.button, true);
+            return;
+        }
+
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_UP)
+        {
+            inputManager.SetMouseButtonPressed(e.button.button, false);
+            return;
+        }
+
+        if (e.type == SDL_EVENT_WINDOW_FOCUS_LOST)
+        {
+            inputManager.Clear();
+            return;
         }
     }
 
@@ -192,6 +184,16 @@ namespace eng
     RenderQueue &Engine::GetRenderQueue()
     {
         return m_renderQueue;
+    }
+
+    FileSystem &Engine::GetFileSystem()
+    {
+        return m_fileSystem;
+    }
+
+    TextureManager &Engine::GetTextureManager()
+    {
+        return m_textureManager;
     }
 
     void Engine::SetScene(Scene *scene)

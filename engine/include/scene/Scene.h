@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scene/GameObject.h"
+#include "Common.h"
 
 #include <vector>
 #include <string>
@@ -22,6 +23,7 @@ namespace eng
         {
             auto obj = new T();
             obj->SetName(name);
+            obj->m_scene = this;
             SetParent(obj, parent);
 
             return obj;
@@ -32,8 +34,14 @@ namespace eng
         void SetMainCamera(GameObject *camera);
         GameObject *GetMainCamera();
 
+        std::vector<LightData> CollectLights();
+
     private:
-        std::vector<std::unique_ptr<GameObject>> m_objects;
+        void CollectLightsRecursive(GameObject *obj, std::vector<LightData> &out);
+
+    private:
+        std::vector<std::unique_ptr<GameObject>>
+            m_objects;
         GameObject *m_mainCamera = nullptr;
     };
 

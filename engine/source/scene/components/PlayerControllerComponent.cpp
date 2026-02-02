@@ -9,59 +9,55 @@
 
 namespace eng
 {
-
     void PlayerControllerComponent::Update(float DeltaTime)
     {
-        auto &inputManager = Engine::GetInstance().GetInputManager();
-        auto rotation = m_owner->GetRotation();
+        auto &input = Engine::GetInstance().GetInputManager();
 
-        if (inputManager.IsMouseButtonPressed(SDL_BUTTON_LEFT))
+        auto rotation = m_owner->GetRotation(); // radians
+
+        // Mouse look (LMB)
+        if (input.IsMouseButtonPressed(SDL_BUTTON_LEFT))
         {
-            const auto &oldPos = inputManager.GetMousePositionOld();
-            const auto &currentPos = inputManager.GetMousePositionCurrent();
+            const auto &oldPos = input.GetMousePositionOld();
+            const auto &curPos = input.GetMousePositionCurrent();
 
-            float deltaX = currentPos.x - oldPos.x;
-            float deltaY = currentPos.y - oldPos.y;
+            float dx = curPos.x - oldPos.x;
+            float dy = curPos.y - oldPos.y;
 
-            // rotation around Y axis
-            rotation.y -= deltaX * m_sensitivity * DeltaTime;
+            // rotation.y -= dx * m_sensitivity; // yaw
+            float yAngle = -dx * m_sensitivity;
+            glm::quat yRot = glm::angleAxis(yAngle, glm::vec3(0.f, 1.f, 0.f));
 
-            // rotation around X axis
-            rotation.x -= deltaY * m_sensitivity * DeltaTime;
+            // rotation.x -= dy * m_sensitivity; // pitch
+            float XAngle = -dy * m_sensitivity;
+            glm::vec3 right = rotation * glm::vec3(1.f, 0.f, 0.f);
+            glm::quat xRot = glm::angleAxis(XAngle, right);
 
+            glm::quat deltaRot = yRot * xRot;
+            rotation = glm::normalize(deltaRot * rotation);
+            // rotation.x = glm::clamp(rotation.x, glm::radians(-89.0f), glm::radians(89.0f));
             m_owner->SetRotation(rotation);
         }
 
-        glm::mat4 rotMat(1.f);
-        rotMat = glm::rotate(rotMat, rotation.x, glm::vec3(1.f, 0.f, 0.f)); // X-axis
-        rotMat = glm::rotate(rotMat, rotation.y, glm::vec3(0.f, 1.f, 0.f)); // Y-axis
-        rotMat = glm::rotate(rotMat, rotation.z, glm::vec3(0.f, 0.f, 1.f)); // Z-axis
+        glm::vec3 front = rotation * glm::vec3(0.f, 0.f, -1.f);
+        glm::vec3 right = rotation * glm::vec3(1.f, 0.f, 0.f);
 
-        glm::vec3 front = glm::normalize(glm::vec3(rotMat * glm::vec4(0.f, 0.f, -1.f, 0.f)));
-        glm::vec3 right = glm::normalize(glm::vec3(rotMat * glm::vec4(1.f, 0.f, 0.f, 0.f)));
+        // Move
+        glm::vec3 move(0.0f);
+        if (input.IsKeyPressed(SDL_SCANCODE_A))
+            move -= right;
+        if (input.IsKeyPressed(SDL_SCANCODE_D))
+            move += right;
+        if (input.IsKeyPressed(SDL_SCANCODE_W))
+            move += front;
+        if (input.IsKeyPressed(SDL_SCANCODE_S))
+            move -= front;
 
         auto position = m_owner->GetPosition();
 
-        // Left/Right movement
-        if (inputManager.IsKeyPressed(SDL_SCANCODE_A))
-        {
-            position -= right * m_moveSpeed * DeltaTime;
-        }
-        else if (inputManager.IsKeyPressed(SDL_SCANCODE_D))
-        {
-            position += right * m_moveSpeed * DeltaTime;
-        }
+        if (glm::length(move) > 0.0f)
+            position += glm::normalize(move) * m_moveSpeed * DeltaTime;
 
-        // Vertical movement
-        if (inputManager.IsKeyPressed(SDL_SCANCODE_W))
-        {
-            position += front * m_moveSpeed * DeltaTime;
-        }
-        else if (inputManager.IsKeyPressed(SDL_SCANCODE_S))
-        {
-            position -= front * m_moveSpeed * DeltaTime;
-        }
         m_owner->SetPosition(position);
     }
-
 }

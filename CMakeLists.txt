@@ -16,7 +16,22 @@ target_include_directories(${PROJECT_NAME} PRIVATE include)
 
 add_subdirectory(engine)
 
+set(ASSETS_DIR "${CMAKE_SOURCE_DIR}/assets")
+
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/assets"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+          "${ASSETS_DIR}"
+          "$<TARGET_FILE_DIR:${PROJECT_NAME}>/assets"
+)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE Engine)
+
+# STB
+target_include_directories(${PROJECT_NAME} PRIVATE
+  "${CMAKE_SOURCE_DIR}/engine/thirdparty"
+)
 
 # Copy SDL3.dll next to exe (if shared)
 if (WIN32 AND TARGET SDL3::SDL3)

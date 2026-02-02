@@ -2,26 +2,25 @@
 
 #include <SDL3/SDL_vulkan.h>
 
-#include <Engine.h>
+#include "Engine.h"
 #include "graphics/ShaderProgram.h"
+#include "render/RenderQueue.h" // CameraData
 #include "scene/GameObject.h"
-#include "scene/Component.h"
 #include "scene/components/CameraComponent.h"
 #include "vk/VkHelpers.h"
 
-#include <stdexcept>
-#include <cstring>
 #include <algorithm>
+#include <cstring>
 #include <iostream>
+#include <stdexcept>
 #include <vector>
 
 namespace eng
 {
-
     // ---- Debug Utils (VK_EXT_debug_utils) ----
     static VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
         VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-        VkDebugUtilsMessageTypeFlagsEXT type,
+        VkDebugUtilsMessageTypeFlagsEXT /*type*/,
         const VkDebugUtilsMessengerCallbackDataEXT *callbackData,
         void * /*userData*/)
     {
@@ -56,9 +55,12 @@ namespace eng
             fn(instance, messenger, allocator);
     }
 
-    // ===================== Swapchain =====================
+    // ---------------- Swapchain ----------------
 
-    Swapchain::~Swapchain() { destroy(); }
+    Swapchain::~Swapchain()
+    {
+        destroy();
+    }
 
     Swapchain::Support Swapchain::querySupport(VkPhysicalDevice gpu, VkSurfaceKHR surface)
     {
@@ -97,7 +99,7 @@ namespace eng
         for (auto m : modes)
             if (m == VK_PRESENT_MODE_MAILBOX_KHR)
                 return m;
-        return VK_PRESENT_MODE_FIFO_KHR; // guaranteed
+        return VK_PRESENT_MODE_FIFO_KHR;
     }
 
     VkExtent2D Swapchain::chooseExtent(const VkSurfaceCapabilitiesKHR &caps, SDL_Window *window)
@@ -111,7 +113,6 @@ namespace eng
 
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window, &w, &h);
-
         if (w == 0 || h == 0)
             return {0, 0};
 
@@ -119,6 +120,109 @@ namespace eng
         e.width = (uint32_t)std::clamp(w, (int)caps.minImageExtent.width, (int)caps.maxImageExtent.width);
         e.height = (uint32_t)std::clamp(h, (int)caps.minImageExtent.height, (int)caps.maxImageExtent.height);
         return e;
+    }
+
+    VkFormat Swapchain::findSupportedDepthFormat(VkPhysicalDevice gpu)
+    {
+        const VkFormat candidates[] = {
+            VK_FORMAT_D32_SFLOAT,
+            VK_FORMAT_D32_SFLOAT_S8_UINT,
+            VK_FORMAT_D24_UNORM_S8_UINT};
+
+        for (VkFormat f : candidates)
+        {
+            VkFormatProperties p{};
+            vkGetPhysicalDeviceFormatProperties(gpu, f, &p);
+            if (p.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+                return f;
+        }
+
+        throw std::runtime_error("No supported depth format");
+    }
+
+    static VkImageView CreateImageView(VkDevice device, VkImage image, VkFormat format, VkImageAspectFlags aspect)
+    {
+        VkImageViewCreateInfo iv{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        iv.image = image;
+        iv.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        iv.format = format;
+        iv.subresourceRange.aspectMask = aspect;
+        iv.subresourceRange.baseMipLevel = 0;
+        iv.subresourceRange.levelCount = 1;
+        iv.subresourceRange.baseArrayLayer = 0;
+        iv.subresourceRange.layerCount = 1;
+
+        VkImageView view = VK_NULL_HANDLE;
+        vkutil::vkCheck(vkCreateImageView(device, &iv, nullptr, &view), "vkCreateImageView failed");
+        return view;
+    }
+
+    static void CreateImage(VkPhysicalDevice gpu, VkDevice device,
+                            uint32_t w, uint32_t h, VkFormat format,
+                            VkImageUsageFlags usage,
+                            VkImage &outImage, VkDeviceMemory &outMem)
+    {
+        VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ci.imageType = VK_IMAGE_TYPE_2D;
+        ci.extent = {w, h, 1};
+        ci.mipLevels = 1;
+        ci.arrayLayers = 1;
+        ci.format = format;
+        ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        ci.usage = usage;
+        ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        vkutil::vkCheck(vkCreateImage(device, &ci, nullptr, &outImage), "vkCreateImage failed");
+
+        VkMemoryRequirements req{};
+        vkGetImageMemoryRequirements(device, outImage, &req);
+
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = vkutil::FindMemoryType(gpu, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        vkutil::vkCheck(vkAllocateMemory(device, &ai, nullptr, &outMem), "vkAllocateMemory failed");
+        vkutil::vkCheck(vkBindImageMemory(device, outImage, outMem, 0), "vkBindImageMemory failed");
+    }
+
+    void Swapchain::createDepthResources()
+    {
+        destroyDepthResources();
+
+        m_depthFormat = findSupportedDepthFormat(m_gpu);
+
+        CreateImage(m_gpu, m_device,
+                    m_extent.width, m_extent.height,
+                    m_depthFormat,
+                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                    m_depthImage, m_depthMemory);
+
+        m_depthView = CreateImageView(m_device, m_depthImage, m_depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+    }
+
+    void Swapchain::destroyDepthResources()
+    {
+        if (!m_device)
+            return;
+
+        if (m_depthView)
+        {
+            vkDestroyImageView(m_device, m_depthView, nullptr);
+            m_depthView = VK_NULL_HANDLE;
+        }
+        if (m_depthImage)
+        {
+            vkDestroyImage(m_device, m_depthImage, nullptr);
+            m_depthImage = VK_NULL_HANDLE;
+        }
+        if (m_depthMemory)
+        {
+            vkFreeMemory(m_device, m_depthMemory, nullptr);
+            m_depthMemory = VK_NULL_HANDLE;
+        }
+        m_depthFormat = VK_FORMAT_UNDEFINED;
     }
 
     void Swapchain::create(VkPhysicalDevice gpu,
@@ -143,9 +247,7 @@ namespace eng
         auto ext = chooseExtent(supp.caps, window);
 
         if (ext.width == 0 || ext.height == 0)
-        {
             throw std::runtime_error("Swapchain extent is 0 (window minimized)");
-        }
 
         uint32_t imageCount = supp.caps.minImageCount + 1;
         if (supp.caps.maxImageCount > 0 && imageCount > supp.caps.maxImageCount)
@@ -181,13 +283,13 @@ namespace eng
         m_format = fmt.format;
         m_extent = ext;
 
-        // Images
         uint32_t count = 0;
         vkutil::vkCheck(vkGetSwapchainImagesKHR(m_device, m_swapchain, &count, nullptr), "vkGetSwapchainImagesKHR failed");
         m_images.resize(count);
         vkutil::vkCheck(vkGetSwapchainImagesKHR(m_device, m_swapchain, &count, m_images.data()), "vkGetSwapchainImagesKHR failed(2)");
 
         createImageViews();
+        createDepthResources();
         createRenderPass();
         createFramebuffers();
     }
@@ -224,25 +326,42 @@ namespace eng
         color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+        VkAttachmentDescription depth{};
+        depth.format = m_depthFormat;
+        depth.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
         VkAttachmentReference colorRef{};
         colorRef.attachment = 0;
         colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference depthRef{};
+        depthRef.attachment = 1;
+        depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         VkSubpassDescription sub{};
         sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount = 1;
         sub.pColorAttachments = &colorRef;
+        sub.pDepthStencilAttachment = &depthRef;
 
         VkSubpassDependency dep{};
         dep.srcSubpass = VK_SUBPASS_EXTERNAL;
         dep.dstSubpass = 0;
-        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        VkAttachmentDescription attachments[2] = {color, depth};
 
         VkRenderPassCreateInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-        rp.attachmentCount = 1;
-        rp.pAttachments = &color;
+        rp.attachmentCount = 2;
+        rp.pAttachments = attachments;
         rp.subpassCount = 1;
         rp.pSubpasses = &sub;
         rp.dependencyCount = 1;
@@ -257,11 +376,11 @@ namespace eng
 
         for (size_t i = 0; i < m_views.size(); ++i)
         {
-            VkImageView attachments[] = {m_views[i]};
+            VkImageView attachments[] = {m_views[i], m_depthView};
 
             VkFramebufferCreateInfo fbi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
             fbi.renderPass = m_renderPass;
-            fbi.attachmentCount = 1;
+            fbi.attachmentCount = 2;
             fbi.pAttachments = attachments;
             fbi.width = m_extent.width;
             fbi.height = m_extent.height;
@@ -288,6 +407,8 @@ namespace eng
             vkDestroyImageView(m_device, v, nullptr);
         m_views.clear();
 
+        destroyDepthResources();
+
         if (m_swapchain)
             vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
         m_swapchain = VK_NULL_HANDLE;
@@ -301,9 +422,18 @@ namespace eng
         create(m_gpu, m_device, m_surface, window, m_qGraphics, m_qPresent);
     }
 
-    // ===================== CommandPool =====================
+    bool Swapchain::hasAdequateSupport(VkPhysicalDevice gpu, VkSurfaceKHR surface)
+    {
+        auto s = querySupport(gpu, surface);
+        return !s.formats.empty() && !s.presentModes.empty();
+    }
 
-    CommandPool::~CommandPool() { destroy(); }
+    // ---------------- CommandPool ----------------
+
+    CommandPool::~CommandPool()
+    {
+        destroy();
+    }
 
     void CommandPool::create(VkDevice device, uint32_t queueFamilyIndex)
     {
@@ -323,7 +453,6 @@ namespace eng
 
         if (m_pool)
         {
-            // destroying pool frees command buffers too
             vkDestroyCommandPool(m_device, m_pool, nullptr);
             m_pool = VK_NULL_HANDLE;
         }
@@ -347,9 +476,12 @@ namespace eng
         vkutil::vkCheck(vkAllocateCommandBuffers(m_device, &ai, m_cmdBufs.data()), "vkAllocateCommandBuffers failed");
     }
 
-    // ===================== FrameSync =====================
+    // ---------------- FrameSync ----------------
 
-    FrameSync::~FrameSync() { destroy(); }
+    FrameSync::~FrameSync()
+    {
+        destroy();
+    }
 
     void FrameSync::create(VkDevice device)
     {
@@ -382,7 +514,7 @@ namespace eng
         }
     }
 
-    // ===================== VulkanContext =====================
+    // ---------------- VulkanContext ----------------
 
     VulkanContext::~VulkanContext()
     {
@@ -397,6 +529,7 @@ namespace eng
 
         destroyCameraUBO();
         destroyPerImageSync();
+        destroyTextureDescriptors();
 
         m_sync.destroy();
         m_cmdPool.destroy();
@@ -433,10 +566,8 @@ namespace eng
     void VulkanContext::RecreateAllPrograms()
     {
         for (auto &sp : m_programs)
-        {
             if (sp)
                 sp->Recreate(GetRenderPass(), GetExtent());
-        }
     }
 
     bool VulkanContext::checkValidationLayerSupport()
@@ -448,16 +579,14 @@ namespace eng
 
         const char *layerName = "VK_LAYER_KHRONOS_validation";
         for (auto &p : props)
-        {
             if (std::strcmp(p.layerName, layerName) == 0)
                 return true;
-        }
+
         return false;
     }
 
     void VulkanContext::createPerImageSync()
     {
-        // destroy old if any
         destroyPerImageSync();
 
         VkSemaphoreCreateInfo sci{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
@@ -470,7 +599,6 @@ namespace eng
                             "vkCreateSemaphore renderFinishedPerImage failed");
         }
 
-        // fences that guard each swapchain image usage
         m_imagesInFlight.assign(n, VK_NULL_HANDLE);
     }
 
@@ -480,17 +608,16 @@ namespace eng
             return;
 
         for (auto s : m_renderFinishedPerImage)
-        {
             if (s)
                 vkDestroySemaphore(m_device, s, nullptr);
-        }
+
         m_renderFinishedPerImage.clear();
         m_imagesInFlight.clear();
     }
 
     void VulkanContext::createCameraUBO()
     {
-        // 1) set layout
+        // set=0 binding=0 UBO
         VkDescriptorSetLayoutBinding b{};
         b.binding = 0;
         b.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -504,7 +631,6 @@ namespace eng
         vkutil::vkCheck(vkCreateDescriptorSetLayout(m_device, &li, nullptr, &m_cameraSetLayout),
                         "vkCreateDescriptorSetLayout failed");
 
-        // 2) pool
         VkDescriptorPoolSize ps{};
         ps.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         ps.descriptorCount = FrameSync::MAX_FRAMES;
@@ -517,7 +643,6 @@ namespace eng
         vkutil::vkCheck(vkCreateDescriptorPool(m_device, &pi, nullptr, &m_descPool),
                         "vkCreateDescriptorPool failed");
 
-        // 3) buffers per frame
         m_cameraBuffers.resize(FrameSync::MAX_FRAMES);
         m_cameraMemories.resize(FrameSync::MAX_FRAMES);
         m_cameraMapped.resize(FrameSync::MAX_FRAMES);
@@ -535,7 +660,6 @@ namespace eng
                             "vkMapMemory camera UBO failed");
         }
 
-        // 4) allocate sets
         std::vector<VkDescriptorSetLayout> layouts(FrameSync::MAX_FRAMES, m_cameraSetLayout);
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         ai.descriptorPool = m_descPool;
@@ -546,7 +670,6 @@ namespace eng
         vkutil::vkCheck(vkAllocateDescriptorSets(m_device, &ai, m_cameraSets.data()),
                         "vkAllocateDescriptorSets failed");
 
-        // 5) write descriptors
         for (int i = 0; i < FrameSync::MAX_FRAMES; ++i)
         {
             VkDescriptorBufferInfo bi{};
@@ -603,9 +726,9 @@ namespace eng
 
     void VulkanContext::buildCameraData(SDL_Window *window, CameraData &out) const
     {
-        // Defaults if camera is nullptr
         out.viewMatrix = glm::mat4(1.0f);
         out.projectionMatrix = glm::mat4(1.0f);
+        out.position = glm::vec3(0.f);
 
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window, &w, &h);
@@ -628,6 +751,7 @@ namespace eng
 
         out.viewMatrix = cameraComponent->GetViewMatrix();
         out.projectionMatrix = cameraComponent->GetProjectionMatrix(aspect);
+        out.position = cameraObject->GetWordPosition();
     }
 
     void VulkanContext::updateCameraUBO(const CameraData &cameraData)
@@ -640,10 +764,86 @@ namespace eng
         ubo.view = cameraData.viewMatrix;
         ubo.proj = cameraData.projectionMatrix;
 
-        // flip Y for Vulkan
+        // Vulkan Y flip (если projection из glm::perspective OpenGL-style)
         ubo.proj[1][1] *= -1.0f;
 
         std::memcpy(m_cameraMapped[fi], &ubo, sizeof(CameraUBO));
+    }
+
+    void VulkanContext::createTextureDescriptors()
+    {
+        // set=1 binding=0 sampler2D
+        VkDescriptorSetLayoutBinding b{};
+        b.binding = 0;
+        b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        b.descriptorCount = 1;
+        b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        li.bindingCount = 1;
+        li.pBindings = &b;
+
+        vkutil::vkCheck(vkCreateDescriptorSetLayout(m_device, &li, nullptr, &m_textureSetLayout),
+                        "vkCreateDescriptorSetLayout (texture) failed");
+
+        VkDescriptorPoolSize ps{};
+        ps.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        ps.descriptorCount = 256; // enough for now
+
+        VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pi.maxSets = 256;
+        pi.poolSizeCount = 1;
+        pi.pPoolSizes = &ps;
+
+        vkutil::vkCheck(vkCreateDescriptorPool(m_device, &pi, nullptr, &m_textureDescPool),
+                        "vkCreateDescriptorPool (texture) failed");
+    }
+
+    void VulkanContext::destroyTextureDescriptors()
+    {
+        if (!m_device)
+            return;
+
+        if (m_textureDescPool)
+        {
+            vkDestroyDescriptorPool(m_device, m_textureDescPool, nullptr);
+            m_textureDescPool = VK_NULL_HANDLE;
+        }
+        if (m_textureSetLayout)
+        {
+            vkDestroyDescriptorSetLayout(m_device, m_textureSetLayout, nullptr);
+            m_textureSetLayout = VK_NULL_HANDLE;
+        }
+    }
+
+    VkDescriptorSet VulkanContext::CreateTextureSet(VkImageView view, VkSampler sampler)
+    {
+        if (!m_textureDescPool || !m_textureSetLayout)
+            throw std::runtime_error("Texture descriptor resources not created");
+
+        VkDescriptorSet set = VK_NULL_HANDLE;
+
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = m_textureDescPool;
+        ai.descriptorSetCount = 1;
+        ai.pSetLayouts = &m_textureSetLayout;
+
+        vkutil::vkCheck(vkAllocateDescriptorSets(m_device, &ai, &set), "vkAllocateDescriptorSets (texture) failed");
+
+        VkDescriptorImageInfo ii{};
+        ii.sampler = sampler;
+        ii.imageView = view;
+        ii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w.dstSet = set;
+        w.dstBinding = 0;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo = &ii;
+
+        vkUpdateDescriptorSets(m_device, 1, &w, 0, nullptr);
+        return set;
     }
 
     VulkanContext::QueueFamilies VulkanContext::findQueueFamilies(VkPhysicalDevice gpu, VkSurfaceKHR surface)
@@ -694,34 +894,44 @@ namespace eng
         createDevice();
 
         createCameraUBO();
+        createTextureDescriptors();
 
-        // swapchain depends on device + surface
         m_swapchain.create(m_gpu, m_device, m_surface, window, m_qGraphics, m_qPresent);
 
-        // command pool depends on device + graphics queue family
         m_cmdPool.create(m_device, m_qGraphics);
         m_cmdPool.allocate((uint32_t)m_swapchain.imageCount());
 
-        // sync depends on device
         m_sync.create(m_device);
         createPerImageSync();
     }
 
     void VulkanContext::createInstance(SDL_Window *window)
     {
-        // Extensions from SDL
         Uint32 extCount = 0;
         const char *const *sdlExts = SDL_Vulkan_GetInstanceExtensions(&extCount);
         std::vector<const char *> exts(sdlExts, sdlExts + extCount);
 
         const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
 
+        VkDebugUtilsMessengerCreateInfoEXT dbgCI{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+
         if constexpr (kEnableValidation)
         {
             if (!checkValidationLayerSupport())
-                throw std::runtime_error("Validation layer VK_LAYER_KHRONOS_validation not found (install Vulkan SDK?)");
+                throw std::runtime_error("VK_LAYER_KHRONOS_validation not found");
 
             exts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+            dbgCI.messageSeverity =
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+
+            dbgCI.messageType =
+                VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+
+            dbgCI.pfnUserCallback = DebugCallback;
         }
 
         VkApplicationInfo appInfo{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -736,24 +946,10 @@ namespace eng
         ci.enabledExtensionCount = (uint32_t)exts.size();
         ci.ppEnabledExtensionNames = exts.data();
 
-        VkDebugUtilsMessengerCreateInfoEXT dbgCI{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
         if constexpr (kEnableValidation)
         {
             ci.enabledLayerCount = 1;
             ci.ppEnabledLayerNames = layers;
-
-            dbgCI.messageSeverity =
-                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-
-            dbgCI.messageType =
-                VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-
-            dbgCI.pfnUserCallback = DebugCallback;
-
-            // so we catch instance creation messages too
             ci.pNext = &dbgCI;
         }
 
@@ -781,15 +977,8 @@ namespace eng
 
     void VulkanContext::createSurface(SDL_Window *window)
     {
-        // SDL3 signature you already use:
         if (!SDL_Vulkan_CreateSurface(window, m_instance, nullptr, &m_surface))
             throw std::runtime_error(SDL_GetError());
-    }
-
-    bool Swapchain::hasAdequateSupport(VkPhysicalDevice gpu, VkSurfaceKHR surface)
-    {
-        auto s = querySupport(gpu, surface);
-        return !s.formats.empty() && !s.presentModes.empty();
     }
 
     void VulkanContext::pickPhysicalDevice()
@@ -845,11 +1034,19 @@ namespace eng
 
         const char *devExts[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
+        VkPhysicalDeviceFeatures supported{};
+        vkGetPhysicalDeviceFeatures(m_gpu, &supported);
+
+        VkPhysicalDeviceFeatures enabled{};
+        if (supported.samplerAnisotropy)
+            enabled.samplerAnisotropy = VK_TRUE;
+
         VkDeviceCreateInfo ci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         ci.queueCreateInfoCount = (uint32_t)qcis.size();
         ci.pQueueCreateInfos = qcis.data();
         ci.enabledExtensionCount = 1;
         ci.ppEnabledExtensionNames = devExts;
+        ci.pEnabledFeatures = &enabled;
 
         vkutil::vkCheck(vkCreateDevice(m_gpu, &ci, nullptr, &m_device), "vkCreateDevice failed");
 
@@ -864,36 +1061,40 @@ namespace eng
         VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         vkutil::vkCheck(vkBeginCommandBuffer(cb, &bi), "vkBeginCommandBuffer failed");
 
-        // Clear color from GraphicsAPI
         const float *cc = Engine::GetInstance().GetGraphicsAPI().ClearColor();
 
-        VkClearValue clear{};
-        clear.color.float32[0] = cc[0];
-        clear.color.float32[1] = cc[1];
-        clear.color.float32[2] = cc[2];
-        clear.color.float32[3] = cc[3];
+        VkClearValue clears[2]{};
+        clears[0].color.float32[0] = cc[0];
+        clears[0].color.float32[1] = cc[1];
+        clears[0].color.float32[2] = cc[2];
+        clears[0].color.float32[3] = cc[3];
+        clears[1].depthStencil.depth = 1.0f;
+        clears[1].depthStencil.stencil = 0;
 
         VkRenderPassBeginInfo rbi{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
         rbi.renderPass = m_swapchain.renderPass();
         rbi.framebuffer = m_swapchain.framebuffer(imageIndex);
         rbi.renderArea.offset = {0, 0};
         rbi.renderArea.extent = m_swapchain.extent();
-        rbi.clearValueCount = 1;
-        rbi.pClearValues = &clear;
+        rbi.clearValueCount = 2;
+        rbi.pClearValues = clears;
 
         vkCmdBeginRenderPass(cb, &rbi, VK_SUBPASS_CONTENTS_INLINE);
 
-        // --- camera + ubo ---
         CameraData cameraData{};
         buildCameraData(window, cameraData);
         updateCameraUBO(cameraData);
 
         auto &api = Engine::GetInstance().GetGraphicsAPI();
         api.Begin(cb);
-        api.SetCurrentDescriptorSet(CurrentCameraSet());
+        api.SetCurrentCameraSet(CurrentCameraSet());
+
+        std::vector<LightData> lights;
+        auto *scene = Engine::GetInstance().GetScene();
+        lights = scene->CollectLights();
 
         auto &rq = Engine::GetInstance().GetRenderQueue();
-        rq.Draw(api, cameraData);
+        rq.Draw(api, cameraData, lights);
 
         api.End();
 
@@ -925,21 +1126,17 @@ namespace eng
         vkDeviceWaitIdle(m_device);
 
         m_swapchain.recreate(window);
-
         RecreateAllPrograms();
 
-        // command buffers must match swapchain image count
         m_cmdPool.reset();
         m_cmdPool.allocate((uint32_t)m_swapchain.imageCount());
 
         createPerImageSync();
-
         m_framebufferResized = false;
     }
 
     void VulkanContext::drawFrame(SDL_Window *window, bool resized)
     {
-        // optional: skip rendering if minimized
         int w = 0, h = 0;
         SDL_GetWindowSizeInPixels(window, &w, &h);
         if (w == 0 || h == 0)
@@ -978,10 +1175,8 @@ namespace eng
         }
 
         vkutil::vkCheck(vkResetFences(m_device, 1, &fence), "vkResetFences failed");
-
         m_imagesInFlight[imageIndex] = fence;
 
-        // record
         vkutil::vkCheck(vkResetCommandBuffer(m_cmdPool.at(imageIndex), 0), "vkResetCommandBuffer failed");
         recordCommandBuffer(imageIndex, window);
 
@@ -1006,6 +1201,7 @@ namespace eng
         VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
         pi.waitSemaphoreCount = 1;
         pi.pWaitSemaphores = &signalSem;
+
         VkSwapchainKHR sc = m_swapchain.handle();
         pi.swapchainCount = 1;
         pi.pSwapchains = &sc;

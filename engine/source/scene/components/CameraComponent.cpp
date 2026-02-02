@@ -13,7 +13,17 @@ namespace eng
 
     glm::mat4 CameraComponent::GetViewMatrix() const
     {
-        return glm::inverse(m_owner->GetWorldTransform());
+        glm::mat4 mat = glm::mat4(1.f);
+        mat = glm::mat4_cast(m_owner->GetRotation());
+
+        mat[3] = glm::vec4(m_owner->GetPosition(), 1.f);
+
+        if (m_owner->GetParent())
+        {
+            mat = m_owner->GetParent()->GetWorldTransform() * mat;
+        }
+
+        return glm::inverse(mat);
     }
 
     glm::mat4 CameraComponent::GetProjectionMatrix(float aspect) const

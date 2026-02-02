@@ -7,6 +7,7 @@
 #include "graphics/GraphicsAPI.h"
 #include "graphics/ShaderProgram.h"
 #include "graphics/VertexLayout.h"
+#include "graphics/Texture.h"
 #include "render/Material.h"
 #include "render/Mesh.h"
 #include "render/RenderQueue.h"
@@ -16,3 +17,5 @@
 #include "scene/components/MeshComponent.h"
 #include "scene/components/CameraComponent.h"
 #include "scene/components/PlayerControllerComponent.h"
+#include "scene/components/LightComponent.h"
+#include "io/FileSystem.h"

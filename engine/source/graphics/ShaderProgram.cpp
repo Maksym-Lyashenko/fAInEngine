@@ -15,23 +15,11 @@ namespace eng
         Destroy();
     }
 
-    static std::vector<uint32_t> readSpv(const std::string &path)
-    {
-        std::ifstream f(path, std::ios::ate | std::ios::binary);
-        if (!f)
-            throw std::runtime_error("Failed to open spv: " + path);
-        size_t sz = (size_t)f.tellg();
-        if (sz % 4 != 0)
-            throw std::runtime_error("SPV size not multiple of 4: " + path);
-        std::vector<uint32_t> data(sz / 4);
-        f.seekg(0);
-        f.read(reinterpret_cast<char *>(data.data()), sz);
-        return data;
-    }
-
     VkShaderModule ShaderProgram::loadModule(const std::string &spvPath)
     {
-        auto code = readSpv(spvPath);
+        auto &fs = eng::Engine::GetInstance().GetFileSystem();
+
+        auto code = fs.LoadAssetSpirv(spvPath);
         VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         ci.codeSize = code.size() * sizeof(uint32_t);
         ci.pCode = code.data();
@@ -42,20 +30,22 @@ namespace eng
         return mod;
     }
 
-    void ShaderProgram::createPipelineLayoutIfNeeded(VkDescriptorSetLayout cameraSetLayout)
+    void ShaderProgram::createPipelineLayoutIfNeeded()
     {
         if (m_layout)
             return;
+        if (m_cameraSetLayout == VK_NULL_HANDLE || m_textureSetLayout == VK_NULL_HANDLE)
+            throw std::runtime_error("SetLayout is null");
 
         VkPushConstantRange range{};
         range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         range.offset = 0;
         range.size = sizeof(PushData);
 
-        VkDescriptorSetLayout setLayouts[] = {cameraSetLayout};
+        VkDescriptorSetLayout setLayouts[] = {m_cameraSetLayout, m_textureSetLayout};
 
         VkPipelineLayoutCreateInfo li{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        li.setLayoutCount = 1;
+        li.setLayoutCount = 2;
         li.pSetLayouts = setLayouts;
         li.pushConstantRangeCount = 1;
         li.pPushConstantRanges = &range;
@@ -66,7 +56,8 @@ namespace eng
 
     void ShaderProgram::Create(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
                                const VertexLayout &layout,
-                               const std::string &vertSpv, const std::string &fragSpv, VkDescriptorSetLayout cameraSetLayout)
+                               const std::string &vertSpv, const std::string &fragSpv,
+                               VkDescriptorSetLayout cameraSetLayout, VkDescriptorSetLayout textureSetLayout)
     {
         m_device = device;
         m_renderPass = renderPass;
@@ -76,7 +67,9 @@ namespace eng
         m_fragPath = fragSpv;
 
         m_cameraSetLayout = cameraSetLayout;
-        createPipelineLayoutIfNeeded(m_cameraSetLayout);
+        m_textureSetLayout = textureSetLayout;
+
+        createPipelineLayoutIfNeeded();
         recreatePipelineInternal();
     }
 
@@ -136,6 +129,13 @@ namespace eng
         VkPipelineInputAssemblyStateCreateInfo ia{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
         ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
+        VkPipelineDepthStencilStateCreateInfo ds{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        ds.depthTestEnable = VK_TRUE;
+        ds.depthWriteEnable = VK_TRUE;
+        ds.depthCompareOp = VK_COMPARE_OP_LESS;
+        ds.depthBoundsTestEnable = VK_FALSE;
+        ds.stencilTestEnable = VK_FALSE;
+
         VkViewport vp{};
         vp.width = (float)m_extent.width;
         vp.height = (float)m_extent.height;
@@ -153,8 +153,10 @@ namespace eng
 
         VkPipelineRasterizationStateCreateInfo rs{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         rs.polygonMode = VK_POLYGON_MODE_FILL;
-        rs.cullMode = VK_CULL_MODE_BACK_BIT;            // <-- safest for now (no silent cull)
-        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE; // doesn't matter if cull none
+        rs.cullMode = VK_CULL_MODE_BACK_BIT;
+        rs.depthClampEnable = VK_FALSE;
+        rs.rasterizerDiscardEnable = VK_FALSE;
+        rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rs.lineWidth = 1.f;
 
         VkPipelineMultisampleStateCreateInfo ms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
@@ -178,6 +180,7 @@ namespace eng
         gp.pColorBlendState = &cb;
         gp.layout = m_layout;
         gp.renderPass = m_renderPass;
+        gp.pDepthStencilState = &ds;
         gp.subpass = 0;
 
         vkutil::vkCheck(vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &gp, nullptr, &m_pipeline),
@@ -189,12 +192,13 @@ namespace eng
 
     void ShaderProgram::Destroy()
     {
-        if (!m_device)
-            return;
-        if (m_pipeline)
-            vkDestroyPipeline(m_device, m_pipeline, nullptr);
-        if (m_layout)
-            vkDestroyPipelineLayout(m_device, m_layout, nullptr);
+        if (m_device)
+        {
+            if (m_pipeline)
+                vkDestroyPipeline(m_device, m_pipeline, nullptr);
+            if (m_layout)
+                vkDestroyPipelineLayout(m_device, m_layout, nullptr);
+        }
         m_pipeline = VK_NULL_HANDLE;
         m_layout = VK_NULL_HANDLE;
         m_device = VK_NULL_HANDLE;
@@ -208,11 +212,15 @@ namespace eng
             return; // Bind called outside recording
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-        VkDescriptorSet set = api.GetCurrentDescriptorSet();
-        if (set != VK_NULL_HANDLE)
+        VkDescriptorSet sets[2] = {
+            api.GetCurrentCameraSet(),
+            api.GetCurrentTextureSet()
+
+        };
+        if (sets[0] != VK_NULL_HANDLE && sets[1] != VK_NULL_HANDLE)
         {
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                    m_layout, 0, 1, &set, 0, nullptr);
+                                    m_layout, 0, 2, sets, 0, nullptr);
         }
         api.SetCurrentPipelineLayout(m_layout);
 
@@ -274,6 +282,18 @@ namespace eng
         if (name == "u_color")
         {
             m_pc.u_color = glm::vec4(v, 1.0f);
+        }
+        else if (name == "uLight.position")
+        {
+            m_pc.u_lightPos = glm::vec4(v, 1.0f);
+        }
+        else if (name == "uLight.color")
+        {
+            m_pc.u_lightColor = glm::vec4(v, 1.0f);
+        }
+        else if (name == "u_cameraPos")
+        {
+            m_pc.u_cameraPos = glm::vec4(v, 1.0f);
         }
         else
             return;

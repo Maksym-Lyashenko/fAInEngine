@@ -7,10 +7,12 @@
 #include <memory>
 
 #include <glm/vec3.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/mat4x4.hpp>
 
 namespace eng
 {
+    class Scene;
 
     class GameObject
     {
@@ -20,6 +22,8 @@ namespace eng
         const std::string &GetName() const;
         void SetName(const std::string &name);
         GameObject *GetParent();
+        bool SetParent(GameObject *parent);
+        Scene *GetScene();
         bool IsAlive() const;
         void MarkForDestroy();
 
@@ -41,10 +45,11 @@ namespace eng
         }
 
         const glm::vec3 &GetPosition() const;
+        glm::vec3 GetWordPosition() const;
         void SetPosition(const glm::vec3 &pos);
 
-        const glm::vec3 &GetRotation() const;
-        void SetRotation(const glm::vec3 &rot);
+        const glm::quat &GetRotation() const;
+        void SetRotation(const glm::quat &rot);
 
         const glm::vec3 &GetScale() const;
         void SetScale(const glm::vec3 &scale);
@@ -52,18 +57,21 @@ namespace eng
         glm::mat4 GetLocalTransform() const;
         glm::mat4 GetWorldTransform() const;
 
+        static GameObject *LoadGLTF(const std::string &path);
+
     protected:
         GameObject() = default;
 
     private:
         std::string m_name;
         GameObject *m_parent = nullptr;
+        Scene *m_scene = nullptr;
         std::vector<std::unique_ptr<GameObject>> m_children;
         std::vector<std::unique_ptr<Component>> m_components;
         bool m_isAlive = true;
 
         glm::vec3 m_position = glm::vec3(0.f);
-        glm::vec3 m_rotation = glm::vec3(0.f);
+        glm::quat m_rotation = glm::quat(1.f, 0.f, 0.f, 0.f);
         glm::vec3 m_scale = glm::vec3(1.f);
 
         friend class Scene;

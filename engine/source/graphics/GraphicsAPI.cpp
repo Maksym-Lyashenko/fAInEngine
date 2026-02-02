@@ -16,10 +16,35 @@ namespace eng
     {
         auto &vk = Engine::GetInstance().GetVulkanContext();
         auto sp = std::make_shared<ShaderProgram>();
-        sp->Create(vk.GetDevice(), vk.GetRenderPass(), vk.GetExtent(), layout, vertSpv, fragSpv, vk.GetCameraSetLayout());
+        sp->Create(vk.GetDevice(), vk.GetRenderPass(), vk.GetExtent(), layout, vertSpv, fragSpv, vk.GetCameraSetLayout(), vk.GetTextureSetLayout());
 
         vk.RegisterShaderProgram(sp); // чтобы пересоздавать на resize (см. ниже)
         return sp;
+    }
+
+    const std::shared_ptr<ShaderProgram> &GraphicsAPI::GetDefaultShaderProgram()
+    {
+        if (!m_defaultShaderProgram)
+        {
+            eng::VertexLayout layout;
+            // Position
+            layout.elements.push_back({VertexElement::Position, 3, AttribType::Float32, 0});
+            // Color
+            layout.elements.push_back({VertexElement::Color, 3, AttribType::Float32, sizeof(float) * 3});
+            // UV
+            layout.elements.push_back({VertexElement::UV, 2, AttribType::Float32, sizeof(float) * 6});
+            // Normals
+            layout.elements.push_back({VertexElement::Normal, 3, AttribType::Float32, sizeof(float) * 8});
+
+            layout.stride = sizeof(float) * 11;
+
+            m_defaultShaderProgram = CreateShaderProgram(
+                "shaders/vertex.spv",
+                "shaders/fragment.spv",
+                layout);
+        }
+
+        return m_defaultShaderProgram;
     }
 
     void GraphicsAPI::SetClearColor(float r, float g, float b, float a)

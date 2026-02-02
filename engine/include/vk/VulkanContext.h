@@ -3,18 +3,17 @@
 #include <SDL3/SDL.h>
 #include <vulkan/vulkan.h>
 
-#include "render/Material.h"
-
-#include <vector>
-#include <optional>
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <glm/mat4x4.hpp>
 
 namespace eng
 {
-
+    class ShaderProgram;
     struct CameraData;
 
     // ---------------- Swapchain ----------------
@@ -41,6 +40,8 @@ namespace eng
         VkFormat format() const { return m_format; }
         VkExtent2D extent() const { return m_extent; }
 
+        VkFormat depthFormat() const { return m_depthFormat; }
+
         size_t imageCount() const { return m_images.size(); }
         VkFramebuffer framebuffer(size_t i) const { return m_framebuffers[i]; }
         VkRenderPass renderPass() const { return m_renderPass; }
@@ -60,7 +61,12 @@ namespace eng
         static VkPresentModeKHR choosePresentMode(const std::vector<VkPresentModeKHR> &modes);
         static VkExtent2D chooseExtent(const VkSurfaceCapabilitiesKHR &caps, SDL_Window *window);
 
+        static VkFormat findSupportedDepthFormat(VkPhysicalDevice gpu);
+
         void createImageViews();
+        void createDepthResources();
+        void destroyDepthResources();
+
         void createRenderPass();
         void createFramebuffers();
 
@@ -77,6 +83,13 @@ namespace eng
 
         std::vector<VkImage> m_images;
         std::vector<VkImageView> m_views;
+
+        // depth
+        VkFormat m_depthFormat = VK_FORMAT_UNDEFINED;
+        VkImage m_depthImage = VK_NULL_HANDLE;
+        VkDeviceMemory m_depthMemory = VK_NULL_HANDLE;
+        VkImageView m_depthView = VK_NULL_HANDLE;
+
         VkRenderPass m_renderPass = VK_NULL_HANDLE;
         std::vector<VkFramebuffer> m_framebuffers;
     };
@@ -94,7 +107,7 @@ namespace eng
         void create(VkDevice device, uint32_t queueFamilyIndex);
         void destroy();
 
-        void reset(); // vkResetCommandPool
+        void reset();
         void allocate(uint32_t count);
 
         VkCommandBuffer at(size_t i) const { return m_cmdBufs[i]; }
@@ -136,10 +149,8 @@ namespace eng
     };
 
     // ---------------- VulkanContext ----------------
-
     class VulkanContext
     {
-
     public:
         VulkanContext() = default;
         ~VulkanContext();
@@ -154,7 +165,6 @@ namespace eng
         void RegisterShaderProgram(const std::shared_ptr<ShaderProgram> &sp);
         void RecreateAllPrograms();
 
-    public:
         // getters used by GraphicsAPI
         VkDevice GetDevice() const { return m_device; }
         VkPhysicalDevice GetGPU() const { return m_gpu; }
@@ -166,6 +176,9 @@ namespace eng
 
         VkDescriptorSetLayout GetCameraSetLayout() const { return m_cameraSetLayout; }
         VkDescriptorSet CurrentCameraSet() const { return m_cameraSets[m_sync.frameIndex()]; }
+
+        VkDescriptorSetLayout GetTextureSetLayout() const { return m_textureSetLayout; }
+        VkDescriptorSet CreateTextureSet(VkImageView view, VkSampler sampler);
 
     private:
         struct QueueFamilies
@@ -189,7 +202,6 @@ namespace eng
         void createDevice();
 
         void recordCommandBuffer(uint32_t imageIndex, SDL_Window *window);
-
         void recreateSwapchain(SDL_Window *window);
 
         static QueueFamilies findQueueFamilies(VkPhysicalDevice gpu, VkSurfaceKHR surface);
@@ -205,13 +217,14 @@ namespace eng
         void buildCameraData(SDL_Window *window, CameraData &out) const;
         void updateCameraUBO(const CameraData &cameraData);
 
+        void createTextureDescriptors();
+        void destroyTextureDescriptors();
+
     private:
-        // Debug toggles (validation only in Debug)
-        static constexpr bool kEnableValidation =
 #ifndef NDEBUG
-            true;
+        static constexpr bool kEnableValidation = true;
 #else
-            false;
+        static constexpr bool kEnableValidation = false;
 #endif
 
         VkInstance m_instance = VK_NULL_HANDLE;
@@ -233,8 +246,8 @@ namespace eng
         bool m_framebufferResized = false;
 
         // per swapchain image sync
-        std::vector<VkSemaphore> m_renderFinishedPerImage; // size = swapchain image count
-        std::vector<VkFence> m_imagesInFlight;             // size = swapchain image count (or VK_NULL_HANDLE)
+        std::vector<VkSemaphore> m_renderFinishedPerImage;
+        std::vector<VkFence> m_imagesInFlight;
 
         // shader programs (strong refs so we can Destroy before device)
         std::vector<std::shared_ptr<ShaderProgram>> m_programs;
@@ -247,6 +260,9 @@ namespace eng
         std::vector<VkBuffer> m_cameraBuffers;
         std::vector<VkDeviceMemory> m_cameraMemories;
         std::vector<void *> m_cameraMapped;
+
+        VkDescriptorSetLayout m_textureSetLayout = VK_NULL_HANDLE;
+        VkDescriptorPool m_textureDescPool = VK_NULL_HANDLE;
     };
 
 }

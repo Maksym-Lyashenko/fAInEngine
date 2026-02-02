@@ -26,6 +26,8 @@ namespace eng
                                                            const std::string &fragSpv,
                                                            const VertexLayout &layout);
 
+        const std::shared_ptr<ShaderProgram> &GetDefaultShaderProgram();
+
         void SetClearColor(float r, float g, float b, float a);
 
         void Begin(VkCommandBuffer cmd) { m_cmd = cmd; }
@@ -47,8 +49,11 @@ namespace eng
 
         const float *ClearColor() const { return m_clearColor; }
 
-        void SetCurrentDescriptorSet(VkDescriptorSet set) { m_currenDescriptortSet = set; }
-        VkDescriptorSet GetCurrentDescriptorSet() const { return m_currenDescriptortSet; }
+        void SetCurrentCameraSet(VkDescriptorSet set) { m_cameraSet = set; }
+        VkDescriptorSet GetCurrentCameraSet() const { return m_cameraSet; }
+
+        void SetCurrentTextureSet(VkDescriptorSet set) { m_textureSet = set; }
+        VkDescriptorSet GetCurrentTextureSet() const { return m_textureSet; }
 
     private:
         VkCommandBuffer m_cmd = VK_NULL_HANDLE;
@@ -57,7 +62,10 @@ namespace eng
 
         std::vector<BufferResource> m_ownedBuffers;
 
-        VkDescriptorSet m_currenDescriptortSet = VK_NULL_HANDLE;
+        VkDescriptorSet m_cameraSet = VK_NULL_HANDLE;
+        VkDescriptorSet m_textureSet = VK_NULL_HANDLE;
+
+        std::shared_ptr<ShaderProgram> m_defaultShaderProgram;
     };
 
 }

@@ -23,7 +23,8 @@ namespace eng
 
         void Create(VkDevice device, VkRenderPass renderPass, VkExtent2D extent,
                     const VertexLayout &layout,
-                    const std::string &vertSpv, const std::string &fragSpv, VkDescriptorSetLayout cameraSetLayout);
+                    const std::string &vertSpv, const std::string &fragSpv,
+                    VkDescriptorSetLayout cameraSetLayout, VkDescriptorSetLayout textureSetLayout);
 
         // swapchain recreate
         void Recreate(VkRenderPass rp, VkExtent2D extent);
@@ -43,14 +44,18 @@ namespace eng
         // Must match GLSL push_constant block exactly
         struct PushData
         {
-            glm::mat4 u_model = glm::mat4(1.0f);        // 64 bytes
-            glm::vec4 u_color = glm::vec4(1, 1, 1, 1);  // 16 bytes
-            glm::vec4 u_params = glm::vec4(0, 0, 1, 0); // x=time, y=value, z=strength, w=unused
+            glm::mat4 u_model = glm::mat4(1.0f);                // 64 bytes
+            glm::vec4 u_color = glm::vec4(1.f, 1.f, 1.f, 1.f);  // 16 bytes
+            glm::vec4 u_params = glm::vec4(0.f, 0.f, 1.f, 0.f); // x=time, y=value, z=strength, w=unused
+
+            glm::vec4 u_lightPos = glm::vec4(0.f, 0.f, 0.f, 1.f);
+            glm::vec4 u_lightColor = glm::vec4(1.f, 1.f, 1.f, 1.f);
+            glm::vec4 u_cameraPos = glm::vec4(0.f, 0.f, 0.f, 1.f);
         };
 
     private:
         VkShaderModule loadModule(const std::string &spvPath);
-        void createPipelineLayoutIfNeeded(VkDescriptorSetLayout cameraSetLayout);
+        void createPipelineLayoutIfNeeded();
         void recreatePipelineInternal(); // uses m_renderPass/m_extent
         void pushConstantsNow();         // vkCmdPushConstants if cmd is active
 
@@ -67,6 +72,7 @@ namespace eng
         PushData m_pc{};
 
         VkDescriptorSetLayout m_cameraSetLayout = VK_NULL_HANDLE;
+        VkDescriptorSetLayout m_textureSetLayout = VK_NULL_HANDLE;
     };
 
 }

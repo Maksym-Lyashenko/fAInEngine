@@ -18,6 +18,11 @@ namespace eng
         uint32_t size;   // components 1..4
         AttribType type; // сейчас достаточно Float32
         uint32_t offset; // bytes offset
+
+        static constexpr uint32_t Position = 0;
+        static constexpr uint32_t Color = 1;
+        static constexpr uint32_t UV = 2;
+        static constexpr uint32_t Normal = 3;
     };
 
     struct VertexLayout

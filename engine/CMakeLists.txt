@@ -8,6 +8,11 @@ target_sources(Engine PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/libs.cpp
 )
 
+configure_file(
+  ${PROJECT_SOURCE_DIR}/config.h.in
+  ${PROJECT_BINARY_DIR}/config.h
+)
+
 file(GLOB_RECURSE ENGINE_SRC CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp
 )
@@ -47,6 +52,17 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/SDL
 
 # GLM
 add_subdirectory(thirdparty/glm)
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_BINARY_DIR})
+
+# STB
+include_directories(thirdparty/stb)
+
+# JSON
+include_directories(thirdparty/json)
+
+# CJLTF
+include_directories(thirdparty/cgltf)
 
 target_link_libraries(Engine PUBLIC SDL3::SDL3 glm)
 
