@@ -31,7 +31,8 @@ namespace eng
                     VkSurfaceKHR surface,
                     SDL_Window *window,
                     uint32_t qGraphics,
-                    uint32_t qPresent);
+                    uint32_t qPresent,
+                    VkSampleCountFlagBits msaaSamples);
 
         void destroy();
         void recreate(SDL_Window *window);
@@ -70,6 +71,8 @@ namespace eng
         void createRenderPass();
         void createFramebuffers();
 
+        void createColorMsaaResources();
+
     private:
         VkPhysicalDevice m_gpu = VK_NULL_HANDLE;
         VkDevice m_device = VK_NULL_HANDLE;
@@ -84,6 +87,11 @@ namespace eng
         std::vector<VkImage> m_images;
         std::vector<VkImageView> m_views;
 
+        // MSAA color
+        VkImage m_colorMsaaImage = VK_NULL_HANDLE;
+        VkDeviceMemory m_colorMsaaMemory = VK_NULL_HANDLE;
+        VkImageView m_colorMsaaView = VK_NULL_HANDLE;
+
         // depth
         VkFormat m_depthFormat = VK_FORMAT_UNDEFINED;
         VkImage m_depthImage = VK_NULL_HANDLE;
@@ -92,6 +100,8 @@ namespace eng
 
         VkRenderPass m_renderPass = VK_NULL_HANDLE;
         std::vector<VkFramebuffer> m_framebuffers;
+
+        VkSampleCountFlagBits m_msaaSamples = VK_SAMPLE_COUNT_1_BIT;
     };
 
     // ---------------- CommandPool ----------------
@@ -180,6 +190,8 @@ namespace eng
         VkDescriptorSetLayout GetTextureSetLayout() const { return m_textureSetLayout; }
         VkDescriptorSet CreateTextureSet(VkImageView view, VkSampler sampler);
 
+        VkSampleCountFlagBits GetMsaaSamples() const { return m_msaaSamples; }
+
     private:
         struct QueueFamilies
         {
@@ -263,6 +275,8 @@ namespace eng
 
         VkDescriptorSetLayout m_textureSetLayout = VK_NULL_HANDLE;
         VkDescriptorPool m_textureDescPool = VK_NULL_HANDLE;
+
+        VkSampleCountFlagBits m_msaaSamples = VK_SAMPLE_COUNT_1_BIT;
     };
 
 }

@@ -158,8 +158,10 @@ namespace eng
     }
 
     static void CreateImage(VkPhysicalDevice gpu, VkDevice device,
-                            uint32_t w, uint32_t h, VkFormat format,
+                            uint32_t w, uint32_t h,
+                            VkFormat format,
                             VkImageUsageFlags usage,
+                            VkSampleCountFlagBits samples,
                             VkImage &outImage, VkDeviceMemory &outMem)
     {
         VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -171,7 +173,7 @@ namespace eng
         ci.tiling = VK_IMAGE_TILING_OPTIMAL;
         ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         ci.usage = usage;
-        ci.samples = VK_SAMPLE_COUNT_1_BIT;
+        ci.samples = samples;
         ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         vkutil::vkCheck(vkCreateImage(device, &ci, nullptr, &outImage), "vkCreateImage failed");
@@ -197,7 +199,9 @@ namespace eng
                     m_extent.width, m_extent.height,
                     m_depthFormat,
                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-                    m_depthImage, m_depthMemory);
+                    m_msaaSamples,
+                    m_depthImage,
+                    m_depthMemory);
 
         m_depthView = CreateImageView(m_device, m_depthImage, m_depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
     }
@@ -230,13 +234,15 @@ namespace eng
                            VkSurfaceKHR surface,
                            SDL_Window *window,
                            uint32_t qGraphics,
-                           uint32_t qPresent)
+                           uint32_t qPresent,
+                           VkSampleCountFlagBits msaaSamples)
     {
         m_gpu = gpu;
         m_device = device;
         m_surface = surface;
         m_qGraphics = qGraphics;
         m_qPresent = qPresent;
+        m_msaaSamples = msaaSamples;
 
         auto supp = querySupport(m_gpu, m_surface);
         if (supp.formats.empty() || supp.presentModes.empty())
@@ -289,6 +295,7 @@ namespace eng
         vkutil::vkCheck(vkGetSwapchainImagesKHR(m_device, m_swapchain, &count, m_images.data()), "vkGetSwapchainImagesKHR failed(2)");
 
         createImageViews();
+        createColorMsaaResources();
         createDepthResources();
         createRenderPass();
         createFramebuffers();
@@ -313,22 +320,21 @@ namespace eng
             vkutil::vkCheck(vkCreateImageView(m_device, &iv, nullptr, &m_views[i]), "vkCreateImageView failed");
         }
     }
-
     void Swapchain::createRenderPass()
     {
-        VkAttachmentDescription color{};
-        color.format = m_format;
-        color.samples = VK_SAMPLE_COUNT_1_BIT;
-        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        color.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        VkAttachmentDescription colorMsaa{};
+        colorMsaa.format = m_format;
+        colorMsaa.samples = m_msaaSamples;
+        colorMsaa.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorMsaa.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorMsaa.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorMsaa.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorMsaa.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorMsaa.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
         VkAttachmentDescription depth{};
         depth.format = m_depthFormat;
-        depth.samples = VK_SAMPLE_COUNT_1_BIT;
+        depth.samples = m_msaaSamples;
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         depth.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -336,18 +342,25 @@ namespace eng
         depth.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         depth.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-        VkAttachmentReference colorRef{};
-        colorRef.attachment = 0;
-        colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        VkAttachmentDescription colorResolve{};
+        colorResolve.format = m_format;
+        colorResolve.samples = VK_SAMPLE_COUNT_1_BIT;
+        colorResolve.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorResolve.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colorResolve.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        colorResolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        colorResolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        colorResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-        VkAttachmentReference depthRef{};
-        depthRef.attachment = 1;
-        depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference depthRef{1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+        VkAttachmentReference resolveRef{2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
 
         VkSubpassDescription sub{};
         sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         sub.colorAttachmentCount = 1;
         sub.pColorAttachments = &colorRef;
+        sub.pResolveAttachments = &resolveRef;
         sub.pDepthStencilAttachment = &depthRef;
 
         VkSubpassDependency dep{};
@@ -357,10 +370,10 @@ namespace eng
         dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
         dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-        VkAttachmentDescription attachments[2] = {color, depth};
+        VkAttachmentDescription attachments[3] = {colorMsaa, depth, colorResolve};
 
         VkRenderPassCreateInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-        rp.attachmentCount = 2;
+        rp.attachmentCount = 3;
         rp.pAttachments = attachments;
         rp.subpassCount = 1;
         rp.pSubpasses = &sub;
@@ -376,11 +389,11 @@ namespace eng
 
         for (size_t i = 0; i < m_views.size(); ++i)
         {
-            VkImageView attachments[] = {m_views[i], m_depthView};
+            VkImageView attachments[] = {m_colorMsaaView, m_depthView, m_views[i]};
 
             VkFramebufferCreateInfo fbi{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
             fbi.renderPass = m_renderPass;
-            fbi.attachmentCount = 2;
+            fbi.attachmentCount = 3;
             fbi.pAttachments = attachments;
             fbi.width = m_extent.width;
             fbi.height = m_extent.height;
@@ -388,6 +401,59 @@ namespace eng
 
             vkutil::vkCheck(vkCreateFramebuffer(m_device, &fbi, nullptr, &m_framebuffers[i]), "vkCreateFramebuffer failed");
         }
+    }
+
+    void Swapchain::createColorMsaaResources()
+    {
+        // destroy old
+        if (m_colorMsaaView)
+            vkDestroyImageView(m_device, m_colorMsaaView, nullptr);
+        if (m_colorMsaaImage)
+            vkDestroyImage(m_device, m_colorMsaaImage, nullptr);
+        if (m_colorMsaaMemory)
+            vkFreeMemory(m_device, m_colorMsaaMemory, nullptr);
+
+        m_colorMsaaView = VK_NULL_HANDLE;
+        m_colorMsaaImage = VK_NULL_HANDLE;
+        m_colorMsaaMemory = VK_NULL_HANDLE;
+
+        // create multisampled color image
+        VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ci.imageType = VK_IMAGE_TYPE_2D;
+        ci.extent = {m_extent.width, m_extent.height, 1};
+        ci.mipLevels = 1;
+        ci.arrayLayers = 1;
+        ci.format = m_format;
+        ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        ci.usage = VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        ci.samples = m_msaaSamples;
+        ci.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        vkutil::vkCheck(vkCreateImage(m_device, &ci, nullptr, &m_colorMsaaImage), "vkCreateImage MSAA color failed");
+
+        VkMemoryRequirements req{};
+        vkGetImageMemoryRequirements(m_device, m_colorMsaaImage, &req);
+
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = vkutil::FindMemoryType(m_gpu, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        vkutil::vkCheck(vkAllocateMemory(m_device, &ai, nullptr, &m_colorMsaaMemory), "vkAllocateMemory MSAA color failed");
+        vkutil::vkCheck(vkBindImageMemory(m_device, m_colorMsaaImage, m_colorMsaaMemory, 0), "vkBindImageMemory MSAA color failed");
+
+        // view
+        VkImageViewCreateInfo iv{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        iv.image = m_colorMsaaImage;
+        iv.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        iv.format = m_format;
+        iv.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        iv.subresourceRange.baseMipLevel = 0;
+        iv.subresourceRange.levelCount = 1;
+        iv.subresourceRange.baseArrayLayer = 0;
+        iv.subresourceRange.layerCount = 1;
+
+        vkutil::vkCheck(vkCreateImageView(m_device, &iv, nullptr, &m_colorMsaaView), "vkCreateImageView MSAA color failed");
     }
 
     void Swapchain::destroy()
@@ -407,6 +473,16 @@ namespace eng
             vkDestroyImageView(m_device, v, nullptr);
         m_views.clear();
 
+        if (m_colorMsaaView)
+            vkDestroyImageView(m_device, m_colorMsaaView, nullptr);
+        if (m_colorMsaaImage)
+            vkDestroyImage(m_device, m_colorMsaaImage, nullptr);
+        if (m_colorMsaaMemory)
+            vkFreeMemory(m_device, m_colorMsaaMemory, nullptr);
+        m_colorMsaaView = VK_NULL_HANDLE;
+        m_colorMsaaImage = VK_NULL_HANDLE;
+        m_colorMsaaMemory = VK_NULL_HANDLE;
+
         destroyDepthResources();
 
         if (m_swapchain)
@@ -419,7 +495,7 @@ namespace eng
     void Swapchain::recreate(SDL_Window *window)
     {
         destroy();
-        create(m_gpu, m_device, m_surface, window, m_qGraphics, m_qPresent);
+        create(m_gpu, m_device, m_surface, window, m_qGraphics, m_qPresent, m_msaaSamples);
     }
 
     bool Swapchain::hasAdequateSupport(VkPhysicalDevice gpu, VkSurfaceKHR surface)
@@ -896,7 +972,7 @@ namespace eng
         createCameraUBO();
         createTextureDescriptors();
 
-        m_swapchain.create(m_gpu, m_device, m_surface, window, m_qGraphics, m_qPresent);
+        m_swapchain.create(m_gpu, m_device, m_surface, window, m_qGraphics, m_qPresent, m_msaaSamples);
 
         m_cmdPool.create(m_device, m_qGraphics);
         m_cmdPool.allocate((uint32_t)m_swapchain.imageCount());
@@ -1004,6 +1080,7 @@ namespace eng
                 continue;
 
             m_gpu = d;
+            m_msaaSamples = vkutil::GetMaxUsableSampleCount(m_gpu);
             m_qGraphics = q.graphics.value();
             m_qPresent = q.present.value();
             return;
@@ -1040,6 +1117,8 @@ namespace eng
         VkPhysicalDeviceFeatures enabled{};
         if (supported.samplerAnisotropy)
             enabled.samplerAnisotropy = VK_TRUE;
+        if (supported.sampleRateShading)
+            enabled.sampleRateShading = VK_TRUE;
 
         VkDeviceCreateInfo ci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         ci.queueCreateInfoCount = (uint32_t)qcis.size();

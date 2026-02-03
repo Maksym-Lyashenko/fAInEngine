@@ -61,6 +61,9 @@ bool Game::Init()
     gun->SetPosition(glm::vec3(.75f, -.5f, -.75f));
     gun->SetScale(glm::vec3(-1.f, 1.f, 1.f));
 
+    auto makarov = eng::GameObject::LoadGLTF("models/makarov/scene.gltf");
+    makarov->SetScale(glm::vec3(.01f, .01f, .01f));
+
     auto light = m_scene->CreateObject("Light");
     auto lightComponent = new eng::LightComponent();
     lightComponent->SetColor(glm::vec3(1.f));
